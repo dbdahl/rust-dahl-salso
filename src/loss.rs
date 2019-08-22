@@ -1,7 +1,7 @@
 extern crate rand;
 
-use dahl_partition::*;
 use crate::psm::PairwiseSimilarityMatrixView;
+use dahl_partition::*;
 
 use std::slice;
 
@@ -122,10 +122,11 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     };
 }
 
+/*
 #[cfg(test)]
 mod tests_loss {
     use super::*;
-    use crate::distribution::crp::sample;
+    use dahl_randompartition::crp::sample;
 
     #[test]
     fn test_binder() {
@@ -160,3 +161,5 @@ mod tests_loss {
         }
     }
 }
+*/
+
