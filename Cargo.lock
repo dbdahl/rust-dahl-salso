@@ -98,7 +98,7 @@ dependencies = [
 [[package]]
 name = "dahl-partition"
 version = "0.3.1"
-source = "git+https://dahl-git.byu.edu/dahl/rust-dahl-partition.git#c5064d754183f5303649638d84c334ae0b11786d"
+source = "git+https://dahl-git.byu.edu/dahl/rust-dahl-partition.git#813039738b5418c191fe995f6663df6322c4e2a5"
 dependencies = [
  "rand 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
