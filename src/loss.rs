@@ -1,11 +1,10 @@
 extern crate rand;
 
-use crate::psm::PairwiseSimilarityMatrixView;
 use dahl_partition::*;
 
 use std::slice;
 
-pub fn binder_single(partition: &[usize], psm: &PairwiseSimilarityMatrixView) -> f64 {
+pub fn binder_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum = 0.0;
@@ -23,8 +22,8 @@ pub fn binder_single(partition: &[usize], psm: &PairwiseSimilarityMatrixView) ->
 }
 
 pub fn binder_multiple(
-    partitions: &PartitionsHolderView,
-    psm: &PairwiseSimilarityMatrixView,
+    partitions: &PartitionsHolderBorrower,
+    psm: &SquareMatrixBorrower,
     results: &mut [f64],
 ) {
     let ni = partitions.n_items();
@@ -47,7 +46,7 @@ pub fn binder_multiple(
     }
 }
 
-pub fn vilb_single_kernel(partition: &[usize], psm: &PairwiseSimilarityMatrixView) -> f64 {
+pub fn vilb_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum = 0.0;
@@ -66,8 +65,8 @@ pub fn vilb_single_kernel(partition: &[usize], psm: &PairwiseSimilarityMatrixVie
 }
 
 pub fn vilb_multiple(
-    partitions: &PartitionsHolderView,
-    psm: &PairwiseSimilarityMatrixView,
+    partitions: &PartitionsHolderBorrower,
+    psm: &SquareMatrixBorrower,
     results: &mut [f64],
 ) {
     let ni = partitions.n_items();
@@ -112,8 +111,8 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
 ) {
     let np = n_partitions as usize;
     let ni = n_items as usize;
-    let partitions = PartitionsHolderView::from_ptr(partition_ptr, np, ni, true);
-    let psm = PairwiseSimilarityMatrixView::from_ptr(psm_ptr, ni);
+    let partitions = PartitionsHolderBorrower::from_ptr(partition_ptr, np, ni, true);
+    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let results = slice::from_raw_parts_mut(results_ptr, np);
     match loss {
         0 => binder_multiple(&partitions, &psm, results),
@@ -162,4 +161,3 @@ mod tests_loss {
     }
 }
 */
-

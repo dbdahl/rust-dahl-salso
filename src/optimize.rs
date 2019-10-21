@@ -1,10 +1,8 @@
 extern crate num_cpus;
 extern crate rand;
 
-use dahl_partition::Partition;
 use crate::loss::{binder_single, vilb_single_kernel};
-use crate::psm::PairwiseSimilarityMatrixView;
-
+use dahl_partition::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::cmp::Ordering;
@@ -36,11 +34,11 @@ struct BinderSubsetCalculations {
 
 pub struct BinderComputer<'a> {
     subsets: Vec<BinderSubsetCalculations>,
-    psm: &'a PairwiseSimilarityMatrixView<'a>,
+    psm: &'a SquareMatrixBorrower<'a>,
 }
 
 impl<'a> BinderComputer<'a> {
-    pub fn new(psm: &'a PairwiseSimilarityMatrixView<'a>) -> BinderComputer<'a> {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> BinderComputer<'a> {
         BinderComputer {
             subsets: Vec::new(),
             psm,
@@ -126,7 +124,7 @@ fn binder_micro_optimized_allocation(
 
 pub fn minimize_binder_by_salso(
     max_label: usize,
-    psm: &PairwiseSimilarityMatrixView,
+    psm: &SquareMatrixBorrower,
     max_scans: u32,
     n_permutations: u32,
     stop_time: std::time::SystemTime,
@@ -205,11 +203,11 @@ struct VarOfInfoLBSubsetCalculations {
 
 pub struct VarOfInfoLBComputer<'a> {
     subsets: Vec<VarOfInfoLBSubsetCalculations>,
-    psm: &'a PairwiseSimilarityMatrixView<'a>,
+    psm: &'a SquareMatrixBorrower<'a>,
 }
 
 impl<'a> VarOfInfoLBComputer<'a> {
-    pub fn new(psm: &'a PairwiseSimilarityMatrixView<'a>) -> VarOfInfoLBComputer<'a> {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoLBComputer<'a> {
         VarOfInfoLBComputer {
             subsets: Vec::new(),
             psm,
@@ -326,7 +324,7 @@ impl<'a> VarOfInfoLBComputer<'a> {
             .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
-    pub fn expected_loss_constant(psm: &PairwiseSimilarityMatrixView) -> f64 {
+    pub fn expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
         let ni = psm.n_items();
         let mut s1: f64 = 0.0;
         for i in 0..ni {
@@ -372,7 +370,7 @@ fn vilb_micro_optimized_allocation(
 
 pub fn minimize_vilb_by_salso(
     max_label: usize,
-    psm: &PairwiseSimilarityMatrixView,
+    psm: &SquareMatrixBorrower,
     max_scans: u32,
     n_permutations: u32,
     stop_time: std::time::SystemTime,
@@ -431,7 +429,7 @@ pub fn minimize_vilb_by_salso(
 }
 
 pub fn minimize_by_salso(
-    psm: &PairwiseSimilarityMatrixView,
+    psm: &SquareMatrixBorrower,
     use_vilb: bool,
     max_size: usize,
     max_scans: u32,
@@ -492,8 +490,8 @@ pub fn minimize_by_salso(
 }
 
 pub fn minimize_by_enumeration(
-    f: fn(&[usize], &PairwiseSimilarityMatrixView) -> f64,
-    psm: &PairwiseSimilarityMatrixView,
+    f: fn(&[usize], &SquareMatrixBorrower) -> f64,
+    psm: &SquareMatrixBorrower,
 ) -> Vec<usize> {
     let (tx, rx) = mpsc::channel();
     crossbeam::scope(|s| {
@@ -543,7 +541,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_actual_n_permutations_ptr: *mut i32,
 ) {
     let ni = usize::try_from(n_items).unwrap();
-    let psm = PairwiseSimilarityMatrixView::from_ptr(psm_ptr, ni);
+    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let max_size = usize::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let n_permutations = u32::try_from(n_permutations).unwrap();
@@ -583,7 +581,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     results_label_ptr: *mut i32,
 ) {
     let ni = usize::try_from(n_items).unwrap();
-    let psm = PairwiseSimilarityMatrixView::from_ptr(psm_ptr, ni);
+    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let f = match loss {
         0 => binder_single,
         1 => vilb_single_kernel,
