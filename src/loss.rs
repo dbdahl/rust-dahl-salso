@@ -46,6 +46,19 @@ pub fn binder_multiple(
     }
 }
 
+pub fn vilb_expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
+    let ni = psm.n_items();
+    let mut s1: f64 = 0.0;
+    for i in 0..ni {
+        let mut s2: f64 = 0.0;
+        for j in 0..ni {
+            s2 += unsafe { psm.get_unchecked((i, j)) };
+        }
+        s1 += s2.log2();
+    }
+    s1
+}
+
 pub fn vilb_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
@@ -64,6 +77,10 @@ pub fn vilb_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f6
     sum
 }
 
+pub fn vilb_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+    (vilb_single_kernel(partition, psm) + vilb_expected_loss_constant(psm)) / (psm.n_items() as f64)
+}
+
 pub fn vilb_multiple(
     partitions: &PartitionsHolderBorrower,
     psm: &SquareMatrixBorrower,
@@ -71,30 +88,20 @@ pub fn vilb_multiple(
 ) {
     let ni = partitions.n_items();
     assert_eq!(ni, psm.n_items());
-    let sum2 = {
-        let mut s1 = 0.0;
-        for i in 0..ni {
-            let mut s2 = 0.0;
-            for j in 0..ni {
-                s2 += unsafe { *psm.get_unchecked((i, j)) };
-            }
-            s1 += s2.log2()
-        }
-        s1
-    };
+    let constant = vilb_expected_loss_constant(psm);
     for k in 0..partitions.n_partitions() {
-        let mut sum = sum2;
+        let mut sum = constant;
         for i in 0..ni {
             let mut s1 = 0u32;
-            let mut s2 = 0.0;
+            let mut s3 = 0.0;
             for j in 0..ni {
                 if unsafe { *partitions.get_unchecked((k, i)) == *partitions.get_unchecked((k, j)) }
                 {
                     s1 += 1;
-                    s2 += unsafe { *psm.get_unchecked((i, j)) };
+                    s3 += unsafe { *psm.get_unchecked((i, j)) };
                 }
             }
-            sum += f64::from(s1).log2() - 2.0 * s2.log2();
+            sum += f64::from(s1).log2() - 2.0 * s3.log2();
         }
         unsafe { *results.get_unchecked_mut(k) = sum / (psm.n_items() as f64) };
     }
@@ -121,43 +128,46 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     };
 }
 
-/*
 #[cfg(test)]
 mod tests_loss {
     use super::*;
-    use dahl_randompartition::crp::sample;
 
     #[test]
-    fn test_binder() {
-        let n_partitions = 1000;
+    fn test_computations() {
         let n_items = 5;
-        let mass = 2.0;
-        let mut samples = PartitionsHolder::with_capacity(n_partitions, n_items);
-        for _ in 0..n_partitions {
-            samples.push_partition(&sample(n_items, mass));
+        let mut samples = PartitionsHolder::new(n_items);
+        for labels in Partition::iter(n_items) {
+            samples.push_partition(&Partition::from(&labels[..]));
         }
-        let mut psm = crate::summary::psm::psm(&samples.view(), true);
+        let n_partitions = samples.n_partitions();
+        let mut psm = crate::psm::psm(&samples.view(), true);
         let samples_view = &samples.view();
         let psm_view = &psm.view();
         let mut results = vec![0.0; n_partitions];
         binder_multiple(samples_view, psm_view, &mut results[..]);
-        for i in 0..n_items {
-            relative_eq!(
+        for i in 0..n_partitions {
+            assert_relative_eq!(
                 binder_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
                 results[i]
             );
         }
         vilb_multiple(samples_view, psm_view, &mut results[..]);
-        for i in 1..n_items {
-            relative_eq!(
-                vilb_single_kernel(&samples_view.get(i).labels_via_copying()[..], psm_view)
-                    - vilb_single_kernel(
-                        &samples_view.get(i - 1).labels_via_copying()[..],
-                        psm_view
-                    ),
-                results[i] - results[i - 1]
+        for i in 0..n_partitions {
+            assert_ulps_eq!(
+                vilb_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
+                results[i]
+            );
+        }
+        for i in 1..n_partitions {
+            assert_ulps_eq!(
+                ((1.0 / (n_items as f64))
+                    * (vilb_single_kernel(&samples_view.get(i).labels_via_copying()[..], psm_view)
+                        - vilb_single_kernel(
+                            &samples_view.get(i - 1).labels_via_copying()[..],
+                            psm_view
+                        ))) as f32,
+                (results[i] - results[i - 1]) as f32,
             );
         }
     }
 }
-*/

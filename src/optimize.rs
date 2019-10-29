@@ -315,26 +315,14 @@ impl<'a> VarOfInfoLBComputer<'a> {
 
     pub fn expected_loss(&self) -> f64 {
         let nif = self.psm.n_items() as f64;
-        (self.expected_loss_unnormalized() + Self::expected_loss_constant(self.psm)) / nif
+        (self.expected_loss_unnormalized() + super::loss::vilb_expected_loss_constant(self.psm))
+            / nif
     }
 
     pub fn expected_loss_unnormalized(&self) -> f64 {
         self.subsets
             .iter()
             .fold(0.0, |s, subset| s + subset.committed_loss)
-    }
-
-    pub fn expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
-        let ni = psm.n_items();
-        let mut s1: f64 = 0.0;
-        for i in 0..ni {
-            let mut s2: f64 = 0.0;
-            for j in 0..ni {
-                s2 += unsafe { psm.get_unchecked((i, j)) };
-            }
-            s1 += s2.log2();
-        }
-        s1
     }
 }
 
@@ -424,7 +412,7 @@ pub fn minimize_vilb_by_salso(
     // Canonicalize the labels
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
-    let loss = (global_minimum + VarOfInfoLBComputer::expected_loss_constant(psm)) / (ni as f64);
+    let loss = (global_minimum + super::loss::vilb_expected_loss_constant(psm)) / (ni as f64);
     (labels, loss, global_n_scans, permutations_counter)
 }
 
@@ -445,12 +433,11 @@ pub fn minimize_by_salso(
     };
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
     if !parallel {
-        let result = if use_vilb {
+        if use_vilb {
             minimize_vilb_by_salso(max_label, psm, max_scans, n_permutations, stop_time)
         } else {
             minimize_binder_by_salso(max_label, psm, max_scans, n_permutations, stop_time)
-        };
-        result
+        }
     } else {
         let (tx, rx) = mpsc::channel();
         let n_cores = num_cpus::get() as u32;
