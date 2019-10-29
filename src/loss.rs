@@ -77,6 +77,34 @@ pub fn vilb_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f6
     sum
 }
 
+pub fn vilb_single_kernel_for_partial_partition(
+    partition: &Partition,
+    psm: &SquareMatrixBorrower,
+) -> f64 {
+    let labels = partition.labels();
+    let ni = partition.n_items();
+    assert_eq!(ni, psm.n_items());
+    let mut sum = 0.0;
+    for i in 0..ni {
+        if labels[i].is_none() {
+            continue;
+        }
+        let mut s1 = 0u32;
+        let mut s3 = 0.0;
+        for j in 0..ni {
+            if labels[j].is_none() {
+                continue;
+            }
+            if partition.label_of(i) == partition.label_of(j) {
+                s1 += 1;
+                s3 += unsafe { *psm.get_unchecked((i, j)) };
+            }
+        }
+        sum += f64::from(s1).log2() - 2.0 * s3.log2();
+    }
+    sum
+}
+
 pub fn vilb_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     (vilb_single_kernel(partition, psm) + vilb_expected_loss_constant(psm)) / (psm.n_items() as f64)
 }

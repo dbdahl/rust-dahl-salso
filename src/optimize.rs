@@ -1,7 +1,7 @@
 extern crate num_cpus;
 extern crate rand;
 
-use crate::loss::{binder_single, vilb_single_kernel};
+use crate::loss::{binder_single, vilb_expected_loss_constant, vilb_single_kernel};
 use dahl_partition::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -315,8 +315,7 @@ impl<'a> VarOfInfoLBComputer<'a> {
 
     pub fn expected_loss(&self) -> f64 {
         let nif = self.psm.n_items() as f64;
-        (self.expected_loss_unnormalized() + super::loss::vilb_expected_loss_constant(self.psm))
-            / nif
+        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
     }
 
     pub fn expected_loss_unnormalized(&self) -> f64 {
@@ -412,7 +411,7 @@ pub fn minimize_vilb_by_salso(
     // Canonicalize the labels
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
-    let loss = (global_minimum + super::loss::vilb_expected_loss_constant(psm)) / (ni as f64);
+    let loss = (global_minimum + vilb_expected_loss_constant(psm)) / (ni as f64);
     (labels, loss, global_n_scans, permutations_counter)
 }
 
