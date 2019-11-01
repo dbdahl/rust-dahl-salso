@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 dahl-partition = { git="https://dahl-git.byu.edu/dahl/rust-dahl-partition.git" }
-#dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
+# dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
 rand = "0.7.2"
 crossbeam = "0.7.2"
 num_cpus = "1.10.1"

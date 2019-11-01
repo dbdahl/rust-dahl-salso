@@ -5,6 +5,7 @@ use crate::loss::{binder_single, vilb_expected_loss_constant, vilb_single_kernel
 use dahl_partition::*;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
+use rand::Rng;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::slice;
@@ -18,6 +19,20 @@ fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     } else if a < b {
         Ordering::Less
     } else if a > b {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }
+}
+
+fn cmp_f64_with_enumeration(a: &(usize, f64), b: &(usize, f64)) -> Ordering {
+    if a.1.is_nan() {
+        Ordering::Greater
+    } else if b.1.is_nan() {
+        Ordering::Less
+    } else if a.1 < b.1 {
+        Ordering::Less
+    } else if a.1 > b.1 {
         Ordering::Greater
     } else {
         Ordering::Equal
@@ -70,14 +85,17 @@ impl<'a> BinderComputer<'a> {
 
     pub fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
-        partition.remove_with_index(i, subset_index);
-        partition.clean_subset(subset_index);
         self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
             .items()
             .iter()
             .fold(0.0, |s, j| {
                 s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
             });
+        partition.remove_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            self.subsets.swap_remove(killed_subset_index);
+            assert_eq!(moved_subset_index, self.subsets.len());
+        });
+        partition.clean_subset(subset_index);
         subset_index
     }
 
@@ -111,13 +129,23 @@ fn binder_micro_optimized_allocation(
     partition: &mut Partition,
     binder: &mut BinderComputer,
     i: usize,
+    probability_of_exploration: f64,
 ) -> usize {
-    let subset_index = (0..partition.n_subsets())
+    let iter = (0..partition.n_subsets())
         .map(|subset_index| binder.speculative_add(partition, i, subset_index))
-        .enumerate()
-        .min_by(|a, b| cmp_f64(&a.1, &b.1))
-        .unwrap()
-        .0;
+        .enumerate();
+    let subset_index = if probability_of_exploration > 0.0 {
+        let mut a: Vec<(usize, f64)> = iter.collect();
+        a.sort_by(cmp_f64_with_enumeration);
+        let mut rng = thread_rng();
+        if rng.gen_range(0.0, 1.0) >= probability_of_exploration {
+            a[0].0
+        } else {
+            a[1.min(partition.n_subsets() - 1)].0
+        }
+    } else {
+        iter.min_by(cmp_f64_with_enumeration).unwrap().0
+    };
     binder.add_with_index(partition, i, subset_index);
     subset_index
 }
@@ -127,6 +155,7 @@ pub fn minimize_binder_by_salso(
     psm: &SquareMatrixBorrower,
     max_scans: u32,
     n_permutations: u32,
+    probability_of_exploration: f64,
     stop_time: std::time::SystemTime,
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
@@ -144,7 +173,12 @@ pub fn minimize_binder_by_salso(
         for i in 0..ni {
             binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            binder_micro_optimized_allocation(&mut partition, &mut binder, ii);
+            binder_micro_optimized_allocation(
+                &mut partition,
+                &mut binder,
+                ii,
+                probability_of_exploration,
+            );
         }
         // Sweetening scans
         let mut n_scans = max_scans;
@@ -154,8 +188,12 @@ pub fn minimize_binder_by_salso(
                 binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = binder.remove(&mut partition, ii);
-                let subset_index =
-                    binder_micro_optimized_allocation(&mut partition, &mut binder, ii);
+                let subset_index = binder_micro_optimized_allocation(
+                    &mut partition,
+                    &mut binder,
+                    ii,
+                    probability_of_exploration,
+                );
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
@@ -308,7 +346,10 @@ impl<'a> VarOfInfoLBComputer<'a> {
                                 .fold(0.0, |s, cu| s + cu.committed_contribution)
                 }
             };
-        partition.remove_with_index(i, subset_index);
+        partition.remove_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            self.subsets.swap_remove(killed_subset_index);
+            assert_eq!(moved_subset_index, self.subsets.len());
+        });
         partition.clean_subset(subset_index);
         subset_index
     }
@@ -344,13 +385,23 @@ fn vilb_micro_optimized_allocation(
     partition: &mut Partition,
     vilb: &mut VarOfInfoLBComputer,
     i: usize,
+    probability_of_exploration: f64,
 ) -> usize {
-    let subset_index = (0..partition.n_subsets())
+    let iter = (0..partition.n_subsets())
         .map(|subset_index| vilb.speculative_add(partition, i, subset_index))
-        .enumerate()
-        .min_by(|a, b| cmp_f64(&a.1, &b.1))
-        .unwrap()
-        .0;
+        .enumerate();
+    let subset_index = if probability_of_exploration > 0.0 {
+        let mut a: Vec<(usize, f64)> = iter.collect();
+        a.sort_by(cmp_f64_with_enumeration);
+        let mut rng = thread_rng();
+        if rng.gen_range(0.0, 1.0) >= probability_of_exploration {
+            a[0].0
+        } else {
+            a[1.min(partition.n_subsets() - 1)].0
+        }
+    } else {
+        iter.min_by(cmp_f64_with_enumeration).unwrap().0
+    };
     vilb.add_with_index(partition, i, subset_index);
     subset_index
 }
@@ -360,6 +411,7 @@ pub fn minimize_vilb_by_salso(
     psm: &SquareMatrixBorrower,
     max_scans: u32,
     n_permutations: u32,
+    probability_of_exploration: f64,
     stop_time: std::time::SystemTime,
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
@@ -377,17 +429,28 @@ pub fn minimize_vilb_by_salso(
         for i in 0..ni {
             vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii);
+            vilb_micro_optimized_allocation(
+                &mut partition,
+                &mut vilb,
+                ii,
+                probability_of_exploration,
+            );
         }
         // Sweetening scans
         let mut n_scans = max_scans;
         for scan in 0..max_scans {
+            permutation.shuffle(&mut rng);
             let mut no_change = true;
             for i in 0..ni {
                 vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = vilb.remove(&mut partition, ii);
-                let subset_index = vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii);
+                let subset_index = vilb_micro_optimized_allocation(
+                    &mut partition,
+                    &mut vilb,
+                    ii,
+                    probability_of_exploration,
+                );
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
@@ -421,6 +484,7 @@ pub fn minimize_by_salso(
     max_size: usize,
     max_scans: u32,
     n_permutations: u32,
+    probability_of_exploration: f64,
     seconds: u64,
     nanoseconds: u32,
     parallel: bool,
@@ -433,9 +497,23 @@ pub fn minimize_by_salso(
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
     if !parallel {
         if use_vilb {
-            minimize_vilb_by_salso(max_label, psm, max_scans, n_permutations, stop_time)
+            minimize_vilb_by_salso(
+                max_label,
+                psm,
+                max_scans,
+                n_permutations,
+                probability_of_exploration,
+                stop_time,
+            )
         } else {
-            minimize_binder_by_salso(max_label, psm, max_scans, n_permutations, stop_time)
+            minimize_binder_by_salso(
+                max_label,
+                psm,
+                max_scans,
+                n_permutations,
+                probability_of_exploration,
+                stop_time,
+            )
         }
     } else {
         let (tx, rx) = mpsc::channel();
@@ -446,13 +524,21 @@ pub fn minimize_by_salso(
                 let tx = mpsc::Sender::clone(&tx);
                 s.spawn(move |_| {
                     let result = if use_vilb {
-                        minimize_vilb_by_salso(max_label, psm, max_scans, n_permutations, stop_time)
+                        minimize_vilb_by_salso(
+                            max_label,
+                            psm,
+                            max_scans,
+                            n_permutations,
+                            probability_of_exploration,
+                            stop_time,
+                        )
                     } else {
                         minimize_binder_by_salso(
                             max_label,
                             psm,
                             max_scans,
                             n_permutations,
+                            probability_of_exploration,
                             stop_time,
                         )
                     };
@@ -519,6 +605,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     max_size: i32,
     max_scans: i32,
     n_permutations: i32,
+    probability_of_exploration: f64,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
@@ -546,6 +633,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         max_size,
         max_scans,
         n_permutations,
+        probability_of_exploration,
         secs,
         nanos,
         parallel,
