@@ -131,20 +131,23 @@ fn binder_micro_optimized_allocation(
     i: usize,
     probability_of_exploration: f64,
 ) -> usize {
-    let iter = (0..partition.n_subsets())
+    let max_label = partition.n_subsets() - 1;
+    let iter = (0..=max_label)
         .map(|subset_index| binder.speculative_add(partition, i, subset_index))
         .enumerate();
-    let subset_index = if probability_of_exploration > 0.0 {
+    let take_best = if probability_of_exploration > 0.0 {
+        let mut rng = thread_rng();
+        rng.gen_range(0.0, 1.0) >= probability_of_exploration
+    } else {
+        true
+    };
+    let subset_index = if take_best {
+        iter.min_by(cmp_f64_with_enumeration).unwrap().0
+    } else {
+        // DBD: Rather than doing a full sort (O(n log(n))), I should just find the second largest (O(n)).
         let mut a: Vec<(usize, f64)> = iter.collect();
         a.sort_by(cmp_f64_with_enumeration);
-        let mut rng = thread_rng();
-        if rng.gen_range(0.0, 1.0) >= probability_of_exploration {
-            a[0].0
-        } else {
-            a[1.min(partition.n_subsets() - 1)].0
-        }
-    } else {
-        iter.min_by(cmp_f64_with_enumeration).unwrap().0
+        a[1.min(max_label)].0
     };
     binder.add_with_index(partition, i, subset_index);
     subset_index
@@ -170,37 +173,46 @@ pub fn minimize_binder_by_salso(
         let mut partition = Partition::new(ni);
         permutation.shuffle(&mut rng);
         // Initial allocation
+        let pr_explore = if max_scans == 0 {
+            0.0
+        } else {
+            probability_of_exploration
+        };
         for i in 0..ni {
             binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            binder_micro_optimized_allocation(
-                &mut partition,
-                &mut binder,
-                ii,
-                probability_of_exploration,
-            );
+            binder_micro_optimized_allocation(&mut partition, &mut binder, ii, pr_explore);
         }
         // Sweetening scans
-        let mut n_scans = max_scans;
-        for scan in 0..max_scans {
+        let mut stop_exploring = false;
+        let mut n_scans = 0;
+        while n_scans < max_scans {
+            if n_scans == max_scans - 1 {
+                stop_exploring = true;
+            }
+            permutation.shuffle(&mut rng);
             let mut no_change = true;
+            let pr_explore = if stop_exploring {
+                0.0
+            } else {
+                probability_of_exploration
+            };
             for i in 0..ni {
                 binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = binder.remove(&mut partition, ii);
-                let subset_index = binder_micro_optimized_allocation(
-                    &mut partition,
-                    &mut binder,
-                    ii,
-                    probability_of_exploration,
-                );
+                let subset_index = binder_micro_optimized_allocation(&mut partition, &mut binder, ii, pr_explore);
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
             }
+            n_scans += 1;
             if no_change {
-                n_scans = scan + 1;
-                break;
+                if stop_exploring {
+                    break;
+                } else {
+                    stop_exploring = true;
+                }
             }
         }
         let value = binder.expected_loss_unnormalized();
@@ -387,20 +399,23 @@ fn vilb_micro_optimized_allocation(
     i: usize,
     probability_of_exploration: f64,
 ) -> usize {
-    let iter = (0..partition.n_subsets())
+    let max_label = partition.n_subsets() - 1;
+    let iter = (0..=max_label)
         .map(|subset_index| vilb.speculative_add(partition, i, subset_index))
         .enumerate();
-    let subset_index = if probability_of_exploration > 0.0 {
+    let take_best = if probability_of_exploration > 0.0 {
+        let mut rng = thread_rng();
+        rng.gen_range(0.0, 1.0) >= probability_of_exploration
+    } else {
+        true
+    };
+    let subset_index = if take_best {
+        iter.min_by(cmp_f64_with_enumeration).unwrap().0
+    } else {
+        // DBD: Rather than doing a full sort (O(n log(n))), I should just find the second largest (O(n)).
         let mut a: Vec<(usize, f64)> = iter.collect();
         a.sort_by(cmp_f64_with_enumeration);
-        let mut rng = thread_rng();
-        if rng.gen_range(0.0, 1.0) >= probability_of_exploration {
-            a[0].0
-        } else {
-            a[1.min(partition.n_subsets() - 1)].0
-        }
-    } else {
-        iter.min_by(cmp_f64_with_enumeration).unwrap().0
+        a[1.min(max_label)].0
     };
     vilb.add_with_index(partition, i, subset_index);
     subset_index
@@ -426,38 +441,47 @@ pub fn minimize_vilb_by_salso(
         let mut partition = Partition::new(ni);
         permutation.shuffle(&mut rng);
         // Initial allocation
+        let pr_explore = if max_scans == 0 {
+            0.0
+        } else {
+            probability_of_exploration
+        };
         for i in 0..ni {
             vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            vilb_micro_optimized_allocation(
-                &mut partition,
-                &mut vilb,
-                ii,
-                probability_of_exploration,
-            );
+            vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii, pr_explore);
         }
         // Sweetening scans
-        let mut n_scans = max_scans;
-        for scan in 0..max_scans {
+        let mut stop_exploring = false;
+        let mut n_scans = 0;
+        while n_scans < max_scans {
+            if n_scans == max_scans - 1 {
+                stop_exploring = true;
+            }
             permutation.shuffle(&mut rng);
             let mut no_change = true;
+            let pr_explore = if stop_exploring {
+                0.0
+            } else {
+                probability_of_exploration
+            };
             for i in 0..ni {
                 vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = vilb.remove(&mut partition, ii);
-                let subset_index = vilb_micro_optimized_allocation(
-                    &mut partition,
-                    &mut vilb,
-                    ii,
-                    probability_of_exploration,
-                );
+                let subset_index =
+                    vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii, pr_explore);
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
             }
+            n_scans += 1;
             if no_change {
-                n_scans = scan + 1;
-                break;
+                if stop_exploring {
+                    break;
+                } else {
+                    stop_exploring = true;
+                }
             }
         }
         let value = vilb.expected_loss_unnormalized();
