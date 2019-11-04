@@ -5,11 +5,12 @@ use crate::loss::{binder_single, vilb_expected_loss_constant, vilb_single_kernel
 use dahl_partition::*;
 use rand::seq::SliceRandom;
 use rand::Rng;
+use rand::SeedableRng;
+use rand_isaac::IsaacRng;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::slice;
 use std::sync::mpsc;
-use self::rand::thread_rng;
 
 fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     if a.is_nan() {
@@ -502,7 +503,7 @@ pub fn minimize_vilb_by_salso<T: Rng>(
     (labels, loss, global_n_scans, permutations_counter)
 }
 
-pub fn minimize_by_salso(
+pub fn minimize_by_salso<T: Rng>(
     psm: &SquareMatrixBorrower,
     use_vilb: bool,
     max_size: usize,
@@ -512,6 +513,7 @@ pub fn minimize_by_salso(
     seconds: u64,
     nanoseconds: u32,
     parallel: bool,
+    mut rng: &mut T
 ) -> (Vec<usize>, f64, u32, u32) {
     let max_label = if max_size == 0 {
         usize::max_value()
@@ -528,7 +530,7 @@ pub fn minimize_by_salso(
                 n_permutations,
                 probability_of_exploration,
                 stop_time,
-                &mut thread_rng()
+                rng
             )
         } else {
             minimize_binder_by_salso(
@@ -538,7 +540,7 @@ pub fn minimize_by_salso(
                 n_permutations,
                 probability_of_exploration,
                 stop_time,
-                &mut thread_rng()
+                rng
             )
         }
     } else {
@@ -548,6 +550,7 @@ pub fn minimize_by_salso(
         crossbeam::scope(|s| {
             for _ in 0..n_cores {
                 let tx = mpsc::Sender::clone(&tx);
+                let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                 s.spawn(move |_| {
                     let result = if use_vilb {
                         minimize_vilb_by_salso(
@@ -557,7 +560,7 @@ pub fn minimize_by_salso(
                             n_permutations,
                             probability_of_exploration,
                             stop_time,
-                            &mut thread_rng()
+                            &mut child_rng
                         )
                     } else {
                         minimize_binder_by_salso(
@@ -567,7 +570,7 @@ pub fn minimize_by_salso(
                             n_permutations,
                             probability_of_exploration,
                             stop_time,
-                            &mut thread_rng()
+                            &mut child_rng
                         )
                     };
                     tx.send(result).unwrap();
@@ -640,6 +643,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_expected_loss_ptr: *mut f64,
     results_scans_ptr: *mut i32,
     results_actual_n_permutations_ptr: *mut i32,
+    seed_ptr: *const i32,  // Assumed length is 32
 ) {
     let ni = usize::try_from(n_items).unwrap();
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
@@ -655,6 +659,12 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         )
     };
     let parallel = parallel != 0;
+    let seed_slice = slice::from_raw_parts(seed_ptr, 32);
+    let mut seed = [0u8; 32];
+    for i in 0..seed.len() {
+        seed[i] = seed_slice[i] as u8;
+    }
+    let mut rng = IsaacRng::from_seed(seed);
     let (minimizer, expected_loss, scans, actual_n_permutations) = minimize_by_salso(
         &psm,
         loss != 0,
@@ -665,6 +675,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         secs,
         nanos,
         parallel,
+        &mut rng
     );
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, ni);
     for (i, v) in minimizer.iter().enumerate() {
