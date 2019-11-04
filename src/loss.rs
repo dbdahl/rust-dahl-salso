@@ -1,5 +1,3 @@
-extern crate rand;
-
 use dahl_partition::*;
 
 use std::slice;

@@ -4,12 +4,12 @@ extern crate rand;
 use crate::loss::{binder_single, vilb_expected_loss_constant, vilb_single_kernel};
 use dahl_partition::*;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 use rand::Rng;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::slice;
 use std::sync::mpsc;
+use self::rand::thread_rng;
 
 fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     if a.is_nan() {
@@ -125,18 +125,18 @@ fn binder_ensure_empty_subset(
     }
 }
 
-fn binder_micro_optimized_allocation(
+fn binder_micro_optimized_allocation<T: Rng>(
     partition: &mut Partition,
     binder: &mut BinderComputer,
     i: usize,
     probability_of_exploration: f64,
+    rng: &mut T
 ) -> usize {
     let max_label = partition.n_subsets() - 1;
     let iter = (0..=max_label)
         .map(|subset_index| binder.speculative_add(partition, i, subset_index))
         .enumerate();
     let take_best = if probability_of_exploration > 0.0 {
-        let mut rng = thread_rng();
         rng.gen_range(0.0, 1.0) >= probability_of_exploration
     } else {
         true
@@ -153,25 +153,25 @@ fn binder_micro_optimized_allocation(
     subset_index
 }
 
-pub fn minimize_binder_by_salso(
+pub fn minimize_binder_by_salso<T: Rng>(
     max_label: usize,
     psm: &SquareMatrixBorrower,
     max_scans: u32,
     n_permutations: u32,
     probability_of_exploration: f64,
     stop_time: std::time::SystemTime,
+    rng: &mut T,
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
     let mut permutation: Vec<usize> = (0..ni).collect();
-    let mut rng = thread_rng();
     let mut permutations_counter = 0;
     while permutations_counter < n_permutations {
         let mut binder = BinderComputer::new(psm);
         let mut partition = Partition::new(ni);
-        permutation.shuffle(&mut rng);
+        permutation.shuffle(rng);
         // Initial allocation
         let pr_explore = if max_scans == 0 {
             0.0
@@ -181,7 +181,7 @@ pub fn minimize_binder_by_salso(
         for i in 0..ni {
             binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            binder_micro_optimized_allocation(&mut partition, &mut binder, ii, pr_explore);
+            binder_micro_optimized_allocation(&mut partition, &mut binder, ii, pr_explore, rng);
         }
         // Sweetening scans
         let mut stop_exploring = false;
@@ -190,7 +190,7 @@ pub fn minimize_binder_by_salso(
             if n_scans == max_scans - 1 {
                 stop_exploring = true;
             }
-            permutation.shuffle(&mut rng);
+            permutation.shuffle(rng);
             let mut no_change = true;
             let pr_explore = if stop_exploring {
                 0.0
@@ -201,7 +201,7 @@ pub fn minimize_binder_by_salso(
                 binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = binder.remove(&mut partition, ii);
-                let subset_index = binder_micro_optimized_allocation(&mut partition, &mut binder, ii, pr_explore);
+                let subset_index = binder_micro_optimized_allocation(&mut partition, &mut binder, ii, pr_explore, rng);
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
@@ -393,18 +393,18 @@ fn vilb_ensure_empty_subset(
     }
 }
 
-fn vilb_micro_optimized_allocation(
+fn vilb_micro_optimized_allocation<T: Rng>(
     partition: &mut Partition,
     vilb: &mut VarOfInfoLBComputer,
     i: usize,
     probability_of_exploration: f64,
+    rng: &mut T,
 ) -> usize {
     let max_label = partition.n_subsets() - 1;
     let iter = (0..=max_label)
         .map(|subset_index| vilb.speculative_add(partition, i, subset_index))
         .enumerate();
     let take_best = if probability_of_exploration > 0.0 {
-        let mut rng = thread_rng();
         rng.gen_range(0.0, 1.0) >= probability_of_exploration
     } else {
         true
@@ -421,25 +421,25 @@ fn vilb_micro_optimized_allocation(
     subset_index
 }
 
-pub fn minimize_vilb_by_salso(
+pub fn minimize_vilb_by_salso<T: Rng>(
     max_label: usize,
     psm: &SquareMatrixBorrower,
     max_scans: u32,
     n_permutations: u32,
     probability_of_exploration: f64,
     stop_time: std::time::SystemTime,
+    rng: &mut T
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
     let mut permutation: Vec<usize> = (0..ni).collect();
-    let mut rng = thread_rng();
     let mut permutations_counter = 0;
     while permutations_counter < n_permutations {
         let mut vilb = VarOfInfoLBComputer::new(psm);
         let mut partition = Partition::new(ni);
-        permutation.shuffle(&mut rng);
+        permutation.shuffle(rng);
         // Initial allocation
         let pr_explore = if max_scans == 0 {
             0.0
@@ -449,7 +449,7 @@ pub fn minimize_vilb_by_salso(
         for i in 0..ni {
             vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii, pr_explore);
+            vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii, pr_explore, rng);
         }
         // Sweetening scans
         let mut stop_exploring = false;
@@ -458,7 +458,7 @@ pub fn minimize_vilb_by_salso(
             if n_scans == max_scans - 1 {
                 stop_exploring = true;
             }
-            permutation.shuffle(&mut rng);
+            permutation.shuffle(rng);
             let mut no_change = true;
             let pr_explore = if stop_exploring {
                 0.0
@@ -470,7 +470,7 @@ pub fn minimize_vilb_by_salso(
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = vilb.remove(&mut partition, ii);
                 let subset_index =
-                    vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii, pr_explore);
+                    vilb_micro_optimized_allocation(&mut partition, &mut vilb, ii, pr_explore, rng);
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
@@ -528,6 +528,7 @@ pub fn minimize_by_salso(
                 n_permutations,
                 probability_of_exploration,
                 stop_time,
+                &mut thread_rng()
             )
         } else {
             minimize_binder_by_salso(
@@ -537,6 +538,7 @@ pub fn minimize_by_salso(
                 n_permutations,
                 probability_of_exploration,
                 stop_time,
+                &mut thread_rng()
             )
         }
     } else {
@@ -555,6 +557,7 @@ pub fn minimize_by_salso(
                             n_permutations,
                             probability_of_exploration,
                             stop_time,
+                            &mut thread_rng()
                         )
                     } else {
                         minimize_binder_by_salso(
@@ -564,6 +567,7 @@ pub fn minimize_by_salso(
                             n_permutations,
                             probability_of_exploration,
                             stop_time,
+                            &mut thread_rng()
                         )
                     };
                     tx.send(result).unwrap();

@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/rust-dahl-partition.iml" filepath="$PROJECT_DIR$/.idea/rust-dahl-partition.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/rust-dahl-salso.iml" filepath="$PROJECT_DIR$/.idea/rust-dahl-salso.iml" />
     </modules>
   </component>
 </project>
