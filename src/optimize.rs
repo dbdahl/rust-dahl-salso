@@ -3,6 +3,7 @@ extern crate rand;
 
 use crate::loss::{binder_single, vilb_expected_loss_constant, vilb_single_kernel};
 use dahl_partition::*;
+use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;
@@ -659,12 +660,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         )
     };
     let parallel = parallel != 0;
-    let seed_slice = slice::from_raw_parts(seed_ptr, 32);
-    let mut seed = [0u8; 32];
-    for i in 0..seed.len() {
-        seed[i] = seed_slice[i] as u8;
-    }
-    let mut rng = IsaacRng::from_seed(seed);
+    let mut rng = mk_rng_isaac(seed_ptr);
     let (minimizer, expected_loss, scans, actual_n_permutations) = minimize_by_salso(
         &psm,
         loss != 0,
