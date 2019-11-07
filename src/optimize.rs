@@ -8,6 +8,7 @@ use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;
 use rand_isaac::IsaacRng;
+use rand_distr::{Distribution, Beta};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::slice;
@@ -165,6 +166,9 @@ pub fn minimize_binder_by_salso<T: Rng>(
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
+    let beta_distribution_option = if probability_of_exploration > 0.0 {
+        Some(Beta::new(1.0, 1.0/probability_of_exploration).unwrap())
+    } else { None };
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
@@ -178,7 +182,10 @@ pub fn minimize_binder_by_salso<T: Rng>(
         let pr_explore = if max_scans == 0 {
             0.0
         } else {
-            probability_of_exploration
+            match beta_distribution_option {
+                Some(beta) => beta.sample(rng),
+                None => -probability_of_exploration
+            }
         };
         for i in 0..ni {
             binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
@@ -197,7 +204,10 @@ pub fn minimize_binder_by_salso<T: Rng>(
             let pr_explore = if stop_exploring {
                 0.0
             } else {
-                probability_of_exploration
+                match beta_distribution_option {
+                    Some(beta) => beta.sample(rng),
+                    None => -probability_of_exploration
+                }
             };
             for i in 0..ni {
                 binder_ensure_empty_subset(&mut partition, &mut binder, max_label);
@@ -433,6 +443,9 @@ pub fn minimize_vilb_by_salso<T: Rng>(
     rng: &mut T
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
+    let beta_distribution_option = if probability_of_exploration > 0.0 {
+        Some(Beta::new(1.0, 1.0/probability_of_exploration).unwrap())
+    } else { None };
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
@@ -446,7 +459,10 @@ pub fn minimize_vilb_by_salso<T: Rng>(
         let pr_explore = if max_scans == 0 {
             0.0
         } else {
-            probability_of_exploration
+            match beta_distribution_option {
+                Some(beta) => beta.sample(rng),
+                None => -probability_of_exploration
+            }
         };
         for i in 0..ni {
             vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
@@ -465,7 +481,10 @@ pub fn minimize_vilb_by_salso<T: Rng>(
             let pr_explore = if stop_exploring {
                 0.0
             } else {
-                probability_of_exploration
+                match beta_distribution_option {
+                    Some(beta) => beta.sample(rng),
+                    None => -probability_of_exploration
+                }
             };
             for i in 0..ni {
                 vilb_ensure_empty_subset(&mut partition, &mut vilb, max_label);
