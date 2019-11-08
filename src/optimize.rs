@@ -136,7 +136,7 @@ fn binder_micro_optimized_allocation<T: Rng>(
     rng: &mut T
 ) -> usize {
     let max_label = partition.n_subsets() - 1;
-    let iter = (0..=max_label)
+    let mut iter = (0..=max_label)
         .map(|subset_index| binder.speculative_add(partition, i, subset_index))
         .enumerate();
     let take_best = if probability_of_exploration > 0.0 {
@@ -147,10 +147,27 @@ fn binder_micro_optimized_allocation<T: Rng>(
     let subset_index = if take_best {
         iter.min_by(cmp_f64_with_enumeration).unwrap().0
     } else {
-        // DBD: Rather than doing a full sort (O(n log(n))), I should just find the second largest (O(n)).
-        let mut a: Vec<(usize, f64)> = iter.collect();
-        a.sort_by(cmp_f64_with_enumeration);
-        a[1.min(max_label)].0
+        let mut first_best = iter.next().unwrap();
+        let second_best_option = iter.next();
+        if second_best_option.is_none() {
+            first_best.0
+        } else {
+            let mut second_best = second_best_option.unwrap();
+            if cmp_f64_with_enumeration(&first_best, &second_best) == Ordering::Greater {
+                std::mem::swap(&mut first_best, &mut second_best);
+            }
+            for tuple in iter {
+                if cmp_f64_with_enumeration(&tuple, &second_best) == Ordering::Less {
+                    if cmp_f64_with_enumeration(&tuple, &first_best) == Ordering::Less {
+                        second_best = first_best;
+                        first_best = tuple;
+                    } else {
+                        second_best = tuple;
+                    }
+                }
+            }
+            second_best.0
+        }
     };
     binder.add_with_index(partition, i, subset_index);
     subset_index
@@ -413,7 +430,7 @@ fn vilb_micro_optimized_allocation<T: Rng>(
     rng: &mut T,
 ) -> usize {
     let max_label = partition.n_subsets() - 1;
-    let iter = (0..=max_label)
+    let mut iter = (0..=max_label)
         .map(|subset_index| vilb.speculative_add(partition, i, subset_index))
         .enumerate();
     let take_best = if probability_of_exploration > 0.0 {
@@ -424,10 +441,27 @@ fn vilb_micro_optimized_allocation<T: Rng>(
     let subset_index = if take_best {
         iter.min_by(cmp_f64_with_enumeration).unwrap().0
     } else {
-        // DBD: Rather than doing a full sort (O(n log(n))), I should just find the second largest (O(n)).
-        let mut a: Vec<(usize, f64)> = iter.collect();
-        a.sort_by(cmp_f64_with_enumeration);
-        a[1.min(max_label)].0
+        let mut first_best = iter.next().unwrap();
+        let second_best_option = iter.next();
+        if second_best_option.is_none() {
+            first_best.0
+        } else {
+            let mut second_best = second_best_option.unwrap();
+            if cmp_f64_with_enumeration(&first_best, &second_best) == Ordering::Greater {
+                std::mem::swap(&mut first_best, &mut second_best);
+            }
+            for tuple in iter {
+                if cmp_f64_with_enumeration(&tuple, &second_best) == Ordering::Less {
+                    if cmp_f64_with_enumeration(&tuple, &first_best) == Ordering::Less {
+                        second_best = first_best;
+                        first_best = tuple;
+                    } else {
+                        second_best = tuple;
+                    }
+                }
+            }
+            second_best.0
+        }
     };
     vilb.add_with_index(partition, i, subset_index);
     subset_index
