@@ -101,17 +101,17 @@ impl<'a> Computer for BinderComputer<'a> {
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
+        partition.remove_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            self.subsets.swap_remove(killed_subset_index);
+            assert_eq!(moved_subset_index, self.subsets.len());
+        });
+        partition.clean_subset(subset_index);
         self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
             .items()
             .iter()
             .fold(0.0, |s, j| {
                 s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
             });
-        partition.remove_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            self.subsets.swap_remove(killed_subset_index);
-            assert_eq!(moved_subset_index, self.subsets.len());
-        });
-        partition.clean_subset(subset_index);
         subset_index
     }
 
