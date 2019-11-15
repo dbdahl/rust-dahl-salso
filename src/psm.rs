@@ -4,7 +4,7 @@ use dahl_partition::*;
 use std::slice;
 
 pub fn psm(partitions: &PartitionsHolderBorrower, parallel: bool) -> SquareMatrix {
-    let mut psm = SquareMatrix::new(partitions.n_items());
+    let mut psm = SquareMatrix::zeros(partitions.n_items());
     engine(
         partitions.n_partitions(),
         partitions.n_items(),
