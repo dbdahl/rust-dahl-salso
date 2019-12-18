@@ -101,7 +101,7 @@ impl<'a> Computer for BinderComputer<'a> {
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
-        partition.remove_and_relabel(i, |killed_subset_index, moved_subset_index| {
+        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
         });
@@ -259,11 +259,10 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
                         .fold(0.0, |s, cu| s + cu.committed_contribution)
                 }
             };
-        partition.remove_and_relabel(i, |killed_subset_index, moved_subset_index| {
+        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
         });
-        partition.clean_subset(subset_index);
         subset_index
     }
 
@@ -563,6 +562,30 @@ pub fn minimize_by_enumeration(
         }
     }
     working_minimizer
+}
+
+#[cfg(test)]
+mod tests_optimize {
+    use super::*;
+    use super::rand::thread_rng;
+
+    #[test]
+    fn test_max_scan() {
+        let mut psm = SquareMatrix::identity(5);
+        let psm_view = &psm.view();
+        minimize_by_salso(
+            psm_view,
+            true,
+            2,
+            10,
+            100,
+            0.05,
+            5,
+            0,
+            false,
+            &mut thread_rng());
+    }
+
 }
 
 #[no_mangle]
