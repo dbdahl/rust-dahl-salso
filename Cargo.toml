@@ -9,11 +9,11 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 # dahl-partition = "0.4.0"
-# dahl-partition = { git="https://dahl-git.byu.edu/dahl/rust-dahl-partition.git" }
-dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
+dahl-partition = { git="https://dahl-git.byu.edu/dahl/rust-dahl-partition.git" }
+# dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
 # dahl-roxido = "0.1.0"
-# dahl-roxido = { git="https://dahl-git.byu.edu/dahl/rust-dahl-roxido.git" }
-dahl-roxido = { path="/home/dahl/docs/devel/rust-dahl-roxido" }
+dahl-roxido = { git="https://dahl-git.byu.edu/dahl/rust-dahl-roxido.git" }
+# dahl-roxido = { path="/home/dahl/docs/devel/rust-dahl-roxido" }
 rand = "0.7.2"
 rand_isaac = "0.2.0"
 rand_distr = "0.2.2"
