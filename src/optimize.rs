@@ -7,8 +7,8 @@ use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;
+use rand_distr::{Beta, Distribution};
 use rand_isaac::IsaacRng;
-use rand_distr::{Distribution, Beta};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::slice;
@@ -51,7 +51,6 @@ pub trait Computer {
     fn expected_loss_unnormalized(&self) -> f64;
     fn final_loss_from_kernel(&self, kernel: f64) -> f64;
 }
-
 
 // Expectation of the Binder Loss
 
@@ -101,16 +100,21 @@ impl<'a> Computer for BinderComputer<'a> {
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
-        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            self.subsets.swap_remove(killed_subset_index);
-            assert_eq!(moved_subset_index, self.subsets.len());
-        });
         self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
             .items()
             .iter()
             .fold(0.0, |s, j| {
-                s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
+                let jj = *j;
+                s + if jj != i {
+                    0.5 - unsafe { *self.psm.get_unchecked((i, jj)) }
+                } else {
+                    0.0
+                }
             });
+        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            self.subsets.swap_remove(killed_subset_index);
+            assert_eq!(moved_subset_index, self.subsets.len());
+        });
         subset_index
     }
 
@@ -127,9 +131,7 @@ impl<'a> Computer for BinderComputer<'a> {
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
         2.0 * kernel + self.psm.sum_of_triangle()
     }
-
 }
-
 
 // Lower bound of the expectation of variation of information loss
 
@@ -252,10 +254,10 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
                     let nif = ni as f64;
                     nif * nif.log2()
                         - 2.0
-                        * self.subsets[subset_index]
-                        .cached_units
-                        .iter()
-                        .fold(0.0, |s, cu| s + cu.committed_contribution)
+                            * self.subsets[subset_index]
+                                .cached_units
+                                .iter()
+                                .fold(0.0, |s, cu| s + cu.committed_contribution)
                 }
             };
         partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
@@ -281,14 +283,9 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
     }
 }
 
-
 // General algorithm
 
-fn ensure_empty_subset<T: Computer>(
-    partition: &mut Partition,
-    computer: &mut T,
-    max_label: usize,
-) {
+fn ensure_empty_subset<T: Computer>(partition: &mut Partition, computer: &mut T, max_label: usize) {
     match partition.subsets().last() {
         None => computer.new_subset(partition),
         Some(last) => {
@@ -304,7 +301,7 @@ fn micro_optimized_allocation<T: Rng, U: Computer>(
     computer: &mut U,
     i: usize,
     probability_of_exploration: f64,
-    rng: &mut T
+    rng: &mut T,
 ) -> usize {
     let max_label = partition.n_subsets() - 1;
     let mut iter = (0..=max_label)
@@ -356,8 +353,10 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
     let beta_distribution_option = if probability_of_exploration > 0.0 {
-        Some(Beta::new(1.0, 1.0/probability_of_exploration).unwrap())
-    } else { None };
+        Some(Beta::new(1.0, 1.0 / probability_of_exploration).unwrap())
+    } else {
+        None
+    };
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
@@ -373,7 +372,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
         } else {
             match beta_distribution_option {
                 Some(beta) => beta.sample(rng),
-                None => -probability_of_exploration
+                None => -probability_of_exploration,
             }
         };
         for i in 0..ni {
@@ -395,14 +394,15 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             } else {
                 match beta_distribution_option {
                     Some(beta) => beta.sample(rng),
-                    None => -probability_of_exploration
+                    None => -probability_of_exploration,
                 }
             };
             for i in 0..ni {
                 ensure_empty_subset(&mut partition, &mut computer, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = computer.remove(&mut partition, ii);
-                let subset_index = micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
+                let subset_index =
+                    micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
@@ -444,7 +444,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
     seconds: u64,
     nanoseconds: u32,
     parallel: bool,
-    mut rng: &mut T
+    mut rng: &mut T,
 ) -> (Vec<usize>, f64, u32, u32) {
     let max_label = if max_size == 0 {
         usize::max_value()
@@ -462,7 +462,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 n_permutations,
                 probability_of_exploration,
                 stop_time,
-                rng
+                rng,
             )
         } else {
             minimize_once_by_salso(
@@ -473,7 +473,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 n_permutations,
                 probability_of_exploration,
                 stop_time,
-                rng
+                rng,
             )
         }
     } else {
@@ -487,14 +487,16 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 s.spawn(move |_| {
                     let result = if use_vilb {
                         minimize_once_by_salso(
-                            Box::new(|psm: &'a SquareMatrixBorrower<'a>| VarOfInfoLBComputer::new(psm)),
+                            Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
+                                VarOfInfoLBComputer::new(psm)
+                            }),
                             max_label,
                             psm,
                             max_scans,
                             n_permutations,
                             probability_of_exploration,
                             stop_time,
-                            &mut child_rng
+                            &mut child_rng,
                         )
                     } else {
                         minimize_once_by_salso(
@@ -505,7 +507,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                             n_permutations,
                             probability_of_exploration,
                             stop_time,
-                            &mut child_rng
+                            &mut child_rng,
                         )
                     };
                     tx.send(result).unwrap();
@@ -565,8 +567,8 @@ pub fn minimize_by_enumeration(
 
 #[cfg(test)]
 mod tests_optimize {
-    use super::*;
     use super::rand::thread_rng;
+    use super::*;
 
     #[test]
     fn test_max_scan() {
@@ -582,9 +584,9 @@ mod tests_optimize {
             5,
             0,
             false,
-            &mut thread_rng());
+            &mut thread_rng(),
+        );
     }
-
 }
 
 #[no_mangle]
@@ -602,7 +604,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_expected_loss_ptr: *mut f64,
     results_scans_ptr: *mut i32,
     results_actual_n_permutations_ptr: *mut i32,
-    seed_ptr: *const i32,  // Assumed length is 32
+    seed_ptr: *const i32, // Assumed length is 32
 ) {
     let ni = usize::try_from(n_items).unwrap();
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
@@ -629,7 +631,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         secs,
         nanos,
         parallel,
-        &mut rng
+        &mut rng,
     );
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, ni);
     for (i, v) in minimizer.iter().enumerate() {
