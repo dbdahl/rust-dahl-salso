@@ -105,7 +105,6 @@ impl<'a> Computer for BinderComputer<'a> {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
         });
-        partition.clean_subset(subset_index);
         self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
             .items()
             .iter()
