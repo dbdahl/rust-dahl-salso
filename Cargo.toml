@@ -1,6 +1,6 @@
 [package]
 name = "dahl-salso"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["David B. Dahl <dahl@stat.byu.edu>"]
 edition = "2018"
 description = "An implement of the sequentially-allocated latent structure optimization (SALSO) to find a partition that minimizes various loss functions. The SALSO method was presented at the workshop 'Bayesian Nonparametric Inference: Dependence Structures and their Applications' in Oaxaca, Mexico on December 6, 2017."

@@ -7,8 +7,8 @@ use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
 use rand::Rng;
 use rand::SeedableRng;
-use rand_distr::{Beta, Distribution};
 use rand_isaac::IsaacRng;
+use rand_distr::{Distribution, Gamma};
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::slice;
@@ -348,15 +348,13 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     max_scans: u32,
     n_permutations: u32,
     probability_of_exploration: f64,
+    probability_of_exploration_shape: f64,
+    probability_of_exploration_rate: f64,
     stop_time: std::time::SystemTime,
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, u32) {
     let ni = psm.n_items();
-    let beta_distribution_option = if probability_of_exploration > 0.0 {
-        Some(Beta::new(1.0, 1.0 / probability_of_exploration).unwrap())
-    } else {
-        None
-    };
+    let probability_of_exploration_distribution = Gamma::new(probability_of_exploration_shape, 1.0/probability_of_exploration_rate).unwrap();
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
@@ -367,12 +365,17 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
         let mut partition = Partition::new(ni);
         permutation.shuffle(rng);
         // Initial allocation
-        let pr_explore = if max_scans == 0 {
+        let pr_explore = if max_scans == 0 || probability_of_exploration == 0.0 {
             0.0
         } else {
-            match beta_distribution_option {
-                Some(beta) => beta.sample(rng),
-                None => -probability_of_exploration,
+            if probability_of_exploration < 0.0 {
+                -probability_of_exploration
+            } else {
+                if rng.gen_range(0.0, 1.0) <= probability_of_exploration {
+                    probability_of_exploration_distribution.sample(rng)
+                } else {
+                    0.0
+                }
             }
         };
         for i in 0..ni {
@@ -389,12 +392,17 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             }
             permutation.shuffle(rng);
             let mut no_change = true;
-            let pr_explore = if stop_exploring {
+            let pr_explore = if stop_exploring || probability_of_exploration == 0.0 {
                 0.0
             } else {
-                match beta_distribution_option {
-                    Some(beta) => beta.sample(rng),
-                    None => -probability_of_exploration,
+                if probability_of_exploration < 0.0 {
+                    -probability_of_exploration
+                } else {
+                    if rng.gen_range(0.0, 1.0) <= probability_of_exploration {
+                        probability_of_exploration_distribution.sample(rng)
+                    } else {
+                        0.0
+                    }
                 }
             };
             for i in 0..ni {
@@ -441,6 +449,8 @@ pub fn minimize_by_salso<'a, T: Rng>(
     max_scans: u32,
     n_permutations: u32,
     probability_of_exploration: f64,
+    probability_of_exploration_shape: f64,
+    probability_of_exploration_rate: f64,
     seconds: u64,
     nanoseconds: u32,
     parallel: bool,
@@ -461,6 +471,8 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 max_scans,
                 n_permutations,
                 probability_of_exploration,
+                probability_of_exploration_shape,
+                probability_of_exploration_rate,
                 stop_time,
                 rng,
             )
@@ -472,6 +484,8 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 max_scans,
                 n_permutations,
                 probability_of_exploration,
+                probability_of_exploration_shape,
+                probability_of_exploration_rate,
                 stop_time,
                 rng,
             )
@@ -495,6 +509,8 @@ pub fn minimize_by_salso<'a, T: Rng>(
                             max_scans,
                             n_permutations,
                             probability_of_exploration,
+                            probability_of_exploration_shape,
+                            probability_of_exploration_rate,
                             stop_time,
                             &mut child_rng,
                         )
@@ -506,6 +522,8 @@ pub fn minimize_by_salso<'a, T: Rng>(
                             max_scans,
                             n_permutations,
                             probability_of_exploration,
+                            probability_of_exploration_shape,
+                            probability_of_exploration_rate,
                             stop_time,
                             &mut child_rng,
                         )
@@ -580,7 +598,9 @@ mod tests_optimize {
             2,
             10,
             100,
-            0.05,
+            0.5,
+            0.5,
+            50.0,
             5,
             0,
             false,
@@ -598,6 +618,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     max_scans: i32,
     n_permutations: i32,
     probability_of_exploration: f64,
+    probability_of_exploration_shape: f64,
+    probability_of_exploration_rate: f64,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
@@ -628,6 +650,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         max_scans,
         n_permutations,
         probability_of_exploration,
+        probability_of_exploration_shape,
+        probability_of_exploration_rate,
         secs,
         nanos,
         parallel,
