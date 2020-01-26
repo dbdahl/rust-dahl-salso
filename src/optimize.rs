@@ -373,7 +373,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
                 -probability_of_exploration
             } else {
                 if rng.gen_range(0.0, 1.0) <= probability_of_exploration {
-                    probability_of_exploration_distribution.sample(rng)
+                    probability_of_exploration_distribution.sample(rng).min(1.0)
                 } else {
                     0.0
                 }
@@ -400,7 +400,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
                     -probability_of_exploration
                 } else {
                     if rng.gen_range(0.0, 1.0) <= probability_of_exploration {
-                        probability_of_exploration_distribution.sample(rng)
+                        probability_of_exploration_distribution.sample(rng).min(1.0)
                     } else {
                         0.0
                     }
