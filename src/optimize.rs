@@ -352,12 +352,13 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     probability_of_exploration_rate: f64,
     stop_time: std::time::SystemTime,
     rng: &mut T,
-) -> (Vec<usize>, f64, u32, u32) {
+) -> (Vec<usize>, f64, u32, f64, u32) {
     let ni = psm.n_items();
     let probability_of_exploration_distribution = Gamma::new(probability_of_exploration_shape, 1.0/probability_of_exploration_rate).unwrap();
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(ni);
     let mut global_n_scans = 0;
+    let mut global_pr_explore = 0.0;
     let mut permutation: Vec<usize> = (0..ni).collect();
     let mut permutations_counter = 0;
     while permutations_counter < n_permutations {
@@ -384,15 +385,15 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
         }
         // Sweetening scans
-        let mut stop_exploring = false;
+        let mut stop_sweetening = false;
         let mut n_scans = 0;
         while n_scans < max_scans {
             if n_scans == max_scans - 1 {
-                stop_exploring = true;
+                stop_sweetening = true;
             }
             permutation.shuffle(rng);
             let mut no_change = true;
-            let pr_explore = if stop_exploring || probability_of_exploration == 0.0 {
+            let pr_explore = if stop_sweetening || probability_of_exploration == 0.0 {
                 0.0
             } else {
                 if probability_of_exploration < 0.0 {
@@ -417,10 +418,10 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             }
             n_scans += 1;
             if no_change {
-                if stop_exploring {
+                if stop_sweetening {
                     break;
                 } else {
-                    stop_exploring = true;
+                    stop_sweetening = true;
                 }
             }
         }
@@ -429,6 +430,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             global_minimum = value;
             global_best = partition;
             global_n_scans = n_scans;
+            global_pr_explore = pr_explore;
         }
         permutations_counter += 1;
         if std::time::SystemTime::now() > stop_time {
@@ -439,7 +441,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
     let loss = computer_factory(psm).final_loss_from_kernel(global_minimum);
-    (labels, loss, global_n_scans, permutations_counter)
+    (labels, loss, global_n_scans, global_pr_explore, permutations_counter)
 }
 
 pub fn minimize_by_salso<'a, T: Rng>(
@@ -455,7 +457,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
     nanoseconds: u32,
     parallel: bool,
     mut rng: &mut T,
-) -> (Vec<usize>, f64, u32, u32) {
+) -> (Vec<usize>, f64, u32, f64, u32) {
     let max_label = if max_size == 0 {
         usize::max_value()
     } else {
@@ -534,15 +536,15 @@ pub fn minimize_by_salso<'a, T: Rng>(
         })
         .unwrap();
         std::mem::drop(tx); // Because of the cloning in the loop.
-        let mut working_best = (vec![0usize; psm.n_items()], std::f64::INFINITY, 0, 0);
+        let mut working_best = (vec![0usize; psm.n_items()], std::f64::INFINITY, 0, 0.0, 0);
         let mut permutations_counter = 0;
         for candidate in rx {
-            permutations_counter += candidate.3;
+            permutations_counter += candidate.4;
             if candidate.1 < working_best.1 {
                 working_best = candidate;
             }
         }
-        working_best.3 = permutations_counter;
+        working_best.4 = permutations_counter;
         working_best
     }
 }
@@ -625,6 +627,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_labels_ptr: *mut i32,
     results_expected_loss_ptr: *mut f64,
     results_scans_ptr: *mut i32,
+    results_pr_explore_ptr: *mut f64,
     results_actual_n_permutations_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
@@ -643,7 +646,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     };
     let parallel = parallel != 0;
     let mut rng = mk_rng_isaac(seed_ptr);
-    let (minimizer, expected_loss, scans, actual_n_permutations) = minimize_by_salso(
+    let (minimizer, expected_loss, scans, actual_pr_explore, actual_n_permutations) = minimize_by_salso(
         &psm,
         loss != 0,
         max_size,
@@ -663,6 +666,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     }
     *results_expected_loss_ptr = expected_loss;
     *results_scans_ptr = i32::try_from(scans).unwrap();
+    *results_pr_explore_ptr = f64::try_from(actual_pr_explore).unwrap();
     *results_actual_n_permutations_ptr = i32::try_from(actual_n_permutations).unwrap();
 }
 
