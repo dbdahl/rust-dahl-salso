@@ -11,6 +11,7 @@ use rand_distr::{Distribution, Gamma};
 use rand_isaac::IsaacRng;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
+use std::f64;
 use std::slice;
 use std::sync::mpsc;
 
@@ -350,7 +351,6 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
-    stop_time: std::time::SystemTime,
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
     let ni = psm.n_items();
@@ -440,9 +440,6 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             global_pr_explore = pr_explore;
         }
         permutations_counter += 1;
-        if std::time::SystemTime::now() > stop_time {
-            break;
-        }
     }
     // Canonicalize the labels
     global_best.canonicalize();
@@ -462,7 +459,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
     use_vilb: bool,
     max_size: usize,
     max_scans: u32,
-    n_permutations: u32,
+    batch_size: u32,
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
@@ -470,95 +467,105 @@ pub fn minimize_by_salso<'a, T: Rng>(
     nanoseconds: u32,
     parallel: bool,
     mut rng: &mut T,
-) -> (Vec<usize>, f64, u32, f64, u32) {
+) -> ((Vec<usize>, f64, u32, f64, u32), bool) {
     let max_label = if max_size == 0 {
         usize::max_value()
     } else {
         max_size - 1
     };
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
-    if !parallel {
-        if use_vilb {
-            minimize_once_by_salso(
-                Box::new(|psm: &'a SquareMatrixBorrower<'a>| VarOfInfoLBComputer::new(psm)),
-                max_label,
-                psm,
-                max_scans,
-                n_permutations,
-                probability_of_exploration_probability_at_zero,
-                probability_of_exploration_shape,
-                probability_of_exploration_rate,
-                stop_time,
-                rng,
-            )
+    let mut global_best = (Vec::new(), f64::INFINITY, 0, 0.0, 0);
+    loop {
+        let result = if !parallel {
+            if use_vilb {
+                minimize_once_by_salso(
+                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| VarOfInfoLBComputer::new(psm)),
+                    max_label,
+                    psm,
+                    max_scans,
+                    batch_size,
+                    probability_of_exploration_probability_at_zero,
+                    probability_of_exploration_shape,
+                    probability_of_exploration_rate,
+                    rng,
+                )
+            } else {
+                minimize_once_by_salso(
+                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| BinderComputer::new(psm)),
+                    max_label,
+                    psm,
+                    max_scans,
+                    batch_size,
+                    probability_of_exploration_probability_at_zero,
+                    probability_of_exploration_shape,
+                    probability_of_exploration_rate,
+                    rng,
+                )
+            }
         } else {
-            minimize_once_by_salso(
-                Box::new(|psm: &'a SquareMatrixBorrower<'a>| BinderComputer::new(psm)),
-                max_label,
-                psm,
-                max_scans,
-                n_permutations,
-                probability_of_exploration_probability_at_zero,
-                probability_of_exploration_shape,
-                probability_of_exploration_rate,
-                stop_time,
-                rng,
-            )
-        }
-    } else {
-        let (tx, rx) = mpsc::channel();
-        let n_cores = num_cpus::get() as u32;
-        let n_permutations = (n_permutations + n_cores - 1) / n_cores;
-        crossbeam::scope(|s| {
-            for _ in 0..n_cores {
-                let tx = mpsc::Sender::clone(&tx);
-                let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
-                s.spawn(move |_| {
-                    let result = if use_vilb {
-                        minimize_once_by_salso(
-                            Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
-                                VarOfInfoLBComputer::new(psm)
-                            }),
-                            max_label,
-                            psm,
-                            max_scans,
-                            n_permutations,
-                            probability_of_exploration_probability_at_zero,
-                            probability_of_exploration_shape,
-                            probability_of_exploration_rate,
-                            stop_time,
-                            &mut child_rng,
-                        )
-                    } else {
-                        minimize_once_by_salso(
-                            Box::new(|psm: &'a SquareMatrixBorrower<'a>| BinderComputer::new(psm)),
-                            max_label,
-                            psm,
-                            max_scans,
-                            n_permutations,
-                            probability_of_exploration_probability_at_zero,
-                            probability_of_exploration_shape,
-                            probability_of_exploration_rate,
-                            stop_time,
-                            &mut child_rng,
-                        )
-                    };
-                    tx.send(result).unwrap();
-                });
+            let (tx, rx) = mpsc::channel();
+            let n_cores = num_cpus::get() as u32;
+            let n_permutations = (batch_size + n_cores - 1) / n_cores;
+            crossbeam::scope(|s| {
+                for _ in 0..n_cores {
+                    let tx = mpsc::Sender::clone(&tx);
+                    let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
+                    s.spawn(move |_| {
+                        let result = if use_vilb {
+                            minimize_once_by_salso(
+                                Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
+                                    VarOfInfoLBComputer::new(psm)
+                                }),
+                                max_label,
+                                psm,
+                                max_scans,
+                                n_permutations,
+                                probability_of_exploration_probability_at_zero,
+                                probability_of_exploration_shape,
+                                probability_of_exploration_rate,
+                                &mut child_rng,
+                            )
+                        } else {
+                            minimize_once_by_salso(
+                                Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
+                                    BinderComputer::new(psm)
+                                }),
+                                max_label,
+                                psm,
+                                max_scans,
+                                n_permutations,
+                                probability_of_exploration_probability_at_zero,
+                                probability_of_exploration_shape,
+                                probability_of_exploration_rate,
+                                &mut child_rng,
+                            )
+                        };
+                        tx.send(result).unwrap();
+                    });
+                }
+            })
+            .unwrap();
+            std::mem::drop(tx); // Because of the cloning in the loop.
+            let mut working_best = (vec![0usize; psm.n_items()], std::f64::INFINITY, 0, 0.0, 0);
+            let mut permutations_counter = 0;
+            for candidate in rx {
+                permutations_counter += candidate.4;
+                if candidate.1 < working_best.1 {
+                    working_best = candidate;
+                }
             }
-        })
-        .unwrap();
-        std::mem::drop(tx); // Because of the cloning in the loop.
-        let mut working_best = (vec![0usize; psm.n_items()], std::f64::INFINITY, 0, 0.0, 0);
-        let mut permutations_counter = 0;
-        for candidate in rx {
-            permutations_counter += candidate.4;
-            if candidate.1 < working_best.1 {
-                working_best = candidate;
-            }
+            working_best.4 = permutations_counter;
+            working_best
+        };
+        if result.1 >= global_best.1 || result.0 == global_best.0 {
+            return (global_best, false);
         }
-        working_best.4 = permutations_counter;
-        working_best
+        let previous_count = global_best.4;
+        global_best = result;
+        global_best.4 += previous_count;
+        if std::time::SystemTime::now() > stop_time {
+            return (global_best, true);
+        }
     }
 }
 
@@ -631,7 +638,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     loss: i32,
     max_size: i32,
     max_scans: i32,
-    n_permutations: i32,
+    batch_size: i32,
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
@@ -641,15 +648,16 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_expected_loss_ptr: *mut f64,
     results_scans_ptr: *mut i32,
     results_pr_explore_ptr: *mut f64,
-    results_actual_n_permutations_ptr: *mut i32,
+    results_n_permutations_ptr: *mut i32,
+    results_curtailed_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let ni = usize::try_from(n_items).unwrap();
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let max_size = usize::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
-    let n_permutations = u32::try_from(n_permutations).unwrap();
-    let (secs, nanos) = if seconds <= 0.0 {
+    let batch_size = u32::try_from(batch_size).unwrap();
+    let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
         (
@@ -659,13 +667,13 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     };
     let parallel = parallel != 0;
     let mut rng = mk_rng_isaac(seed_ptr);
-    let (minimizer, expected_loss, scans, actual_pr_explore, actual_n_permutations) =
+    let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
         minimize_by_salso(
             &psm,
             loss != 0,
             max_size,
             max_scans,
-            n_permutations,
+            batch_size,
             probability_of_exploration_probability_at_zero,
             probability_of_exploration_shape,
             probability_of_exploration_rate,
@@ -676,12 +684,13 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         );
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, ni);
     for (i, v) in minimizer.iter().enumerate() {
-        results_slice[i] = i32::try_from(*v).unwrap();
+        results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
     *results_expected_loss_ptr = expected_loss;
     *results_scans_ptr = i32::try_from(scans).unwrap();
     *results_pr_explore_ptr = f64::try_from(actual_pr_explore).unwrap();
-    *results_actual_n_permutations_ptr = i32::try_from(actual_n_permutations).unwrap();
+    *results_n_permutations_ptr = i32::try_from(n_permutations).unwrap();
+    *results_curtailed_ptr = i32::try_from(curtailed).unwrap();
 }
 
 #[no_mangle]
