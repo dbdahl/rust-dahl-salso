@@ -558,6 +558,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
             working_best
         };
         if result.1 >= global_best.1 || result.0 == global_best.0 {
+            global_best.4 += result.4;
             return (global_best, false);
         }
         let previous_count = global_best.4;
