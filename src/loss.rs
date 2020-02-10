@@ -44,13 +44,69 @@ pub fn binder_multiple(
     }
 }
 
+pub fn lpear_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+    let ni = partition.len();
+    assert_eq!(ni, psm.n_items());
+    let mut sum_p = 0.0;
+    let mut sum_ip = 0.0;
+    let mut sum_i = 0.0;
+    for j in 0..ni {
+        let cj = unsafe { *partition.get_unchecked(j) };
+        for i in 0..j {
+            let p = unsafe { *psm.get_unchecked((i, j)) };
+            sum_p += p;
+            if unsafe { *partition.get_unchecked(i) } == cj {
+                sum_ip += p;
+                sum_i += 1.0;
+            }
+        }
+    }
+    let no2 = (ni * (ni - 1) / 2) as f64;
+    let correc = (sum_i * sum_p) / no2;
+    1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc)
+}
+
+pub fn lpear_multiple(
+    partitions: &PartitionsHolderBorrower,
+    psm: &SquareMatrixBorrower,
+    results: &mut [f64],
+) {
+    let ni = partitions.n_items();
+    assert_eq!(ni, psm.n_items());
+    let no2 = (ni * (ni - 1) / 2) as f64;
+    let mut sum_p = 0.0;
+    for j in 0..ni {
+        for i in 0..j {
+            sum_p += unsafe { *psm.get_unchecked((i, j)) };
+        }
+    }
+    for k in 0..partitions.n_partitions() {
+        let mut sum_ip = 0.0;
+        let mut sum_i = 0.0;
+        for j in 0..ni {
+            let cj = unsafe { *partitions.get_unchecked((k, j)) };
+            for i in 0..j {
+                if unsafe { *partitions.get_unchecked((k, i)) } == cj {
+                    sum_ip += unsafe { *psm.get_unchecked((i, j)) };
+                    sum_i += 1.0;
+                }
+            }
+        }
+        let correc = (sum_i * sum_p) / no2;
+        unsafe {
+            *results.get_unchecked_mut(k) =
+                1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc)
+        };
+    }
+}
+
 pub fn vilb_expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
     let ni = psm.n_items();
     let mut s1: f64 = 0.0;
     for i in 0..ni {
         let mut s2: f64 = 0.0;
         for j in 0..ni {
-            s2 += unsafe { psm.get_unchecked((i, j)) };
+            s2 += unsafe { *psm.get_unchecked((i, j)) };
         }
         s1 += s2.log2();
     }
@@ -149,7 +205,8 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let results = slice::from_raw_parts_mut(results_ptr, np);
     match loss {
         0 => binder_multiple(&partitions, &psm, results),
-        1 => vilb_multiple(&partitions, &psm, results),
+        1 => lpear_multiple(&partitions, &psm, results),
+        2 => vilb_multiple(&partitions, &psm, results),
         _ => panic!("Unsupported loss method: {}", loss),
     };
 }
@@ -174,6 +231,13 @@ mod tests_loss {
         for i in 0..n_partitions {
             assert_relative_eq!(
                 binder_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
+                results[i]
+            );
+        }
+        lpear_multiple(samples_view, psm_view, &mut results[..]);
+        for i in 0..n_partitions {
+            assert_relative_eq!(
+                npear_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
                 results[i]
             );
         }
