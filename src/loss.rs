@@ -26,21 +26,23 @@ pub fn binder_multiple(
 ) {
     let ni = partitions.n_items();
     assert_eq!(ni, psm.n_items());
+    let mut sum_p = 0.0;
+    for j in 0..ni {
+        for i in 0..j {
+            sum_p += unsafe { *psm.get_unchecked((i, j)) };
+        }
+    }
     for k in 0..partitions.n_partitions() {
         let mut sum = 0.0;
         for j in 0..ni {
+            let cj = unsafe { *partitions.get_unchecked((k, j)) };
             for i in 0..j {
-                let p = unsafe { *psm.get_unchecked((i, j)) };
-                sum += if unsafe {
-                    *partitions.get_unchecked((k, i)) == *partitions.get_unchecked((k, j))
-                } {
-                    1.0 - p
-                } else {
-                    p
+                if unsafe { *partitions.get_unchecked((k, i)) == cj } {
+                    sum += 1.0 - 2.0 * unsafe { *psm.get_unchecked((i, j)) };
                 }
             }
         }
-        unsafe { *results.get_unchecked_mut(k) = sum };
+        unsafe { *results.get_unchecked_mut(k) = sum + sum_p };
     }
 }
 
@@ -237,7 +239,7 @@ mod tests_loss {
         lpear_multiple(samples_view, psm_view, &mut results[..]);
         for i in 0..n_partitions {
             assert_relative_eq!(
-                npear_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
+                lpear_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
                 results[i]
             );
         }
