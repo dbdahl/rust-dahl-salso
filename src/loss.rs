@@ -47,7 +47,7 @@ pub fn binder_multiple(
     }
 }
 
-pub fn lpear_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn adjrand_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum_p = 0.0;
@@ -69,7 +69,7 @@ pub fn lpear_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc)
 }
 
-pub fn lpear_multiple(
+pub fn adjrand_multiple(
     partitions: &PartitionsHolderBorrower,
     psm: &SquareMatrixBorrower,
     results: &mut [f64],
@@ -209,7 +209,7 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let loss_function = LossFunction::from_code(loss);
     match loss_function {
         Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
-        Some(LossFunction::LPEAR) => lpear_multiple(&partitions, &psm, results),
+        Some(LossFunction::AdjRand) => adjrand_multiple(&partitions, &psm, results),
         Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
         None => panic!("Unsupported loss method: {}", loss),
     };
@@ -238,10 +238,10 @@ mod tests_loss {
                 results[i]
             );
         }
-        lpear_multiple(samples_view, psm_view, &mut results[..]);
+        adjrand_multiple(samples_view, psm_view, &mut results[..]);
         for i in 0..n_partitions {
             assert_relative_eq!(
-                lpear_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
+                adjrand_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
                 results[i]
             );
         }

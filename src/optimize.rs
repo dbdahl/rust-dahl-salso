@@ -1,7 +1,7 @@
 extern crate num_cpus;
 extern crate rand;
 
-use crate::loss::{binder_single, lpear_single, vilb_expected_loss_constant, vilb_single_kernel};
+use crate::loss::{adjrand_single, binder_single, vilb_expected_loss_constant, vilb_single_kernel};
 use crate::LossFunction;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
@@ -640,7 +640,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     probability_of_exploration_rate,
                     rng,
                 ),
-                LossFunction::LPEAR => minimize_once_by_salso(
+                LossFunction::AdjRand => minimize_once_by_salso(
                     Box::new(|psm: &'a SquareMatrixBorrower<'a>| LPEARComputer::new(psm)),
                     max_label,
                     psm,
@@ -686,7 +686,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                 probability_of_exploration_rate,
                                 &mut child_rng,
                             ),
-                            LossFunction::LPEAR => minimize_once_by_salso(
+                            LossFunction::AdjRand => minimize_once_by_salso(
                                 Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
                                     LPEARComputer::new(psm)
                                 }),
@@ -883,7 +883,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     let loss_function = LossFunction::from_code(loss);
     let f = match loss_function {
         Some(LossFunction::Binder) => binder_single,
-        Some(LossFunction::LPEAR) => lpear_single,
+        Some(LossFunction::AdjRand) => adjrand_single,
         Some(LossFunction::VIlb) => vilb_single_kernel,
         None => panic!("Unsupported loss method: {}", loss),
     };
