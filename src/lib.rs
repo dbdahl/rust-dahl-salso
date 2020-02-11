@@ -7,3 +7,21 @@ extern crate approx;
 pub mod loss;
 pub mod optimize;
 pub mod psm;
+
+#[derive(Debug, Copy, Clone)]
+pub enum LossFunction {
+    Binder,
+    LPEAR,
+    VIlb,
+}
+
+impl LossFunction {
+    fn from_code(x: i32) -> Option<LossFunction> {
+        match x {
+            0 => Some(LossFunction::Binder),
+            1 => Some(LossFunction::LPEAR),
+            2 => Some(LossFunction::VIlb),
+            _ => None,
+        }
+    }
+}

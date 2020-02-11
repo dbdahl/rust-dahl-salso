@@ -1,5 +1,6 @@
 use dahl_partition::*;
 
+use crate::LossFunction;
 use std::slice;
 
 pub fn binder_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
@@ -205,11 +206,12 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let partitions = PartitionsHolderBorrower::from_ptr(partition_ptr, np, ni, true);
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let results = slice::from_raw_parts_mut(results_ptr, np);
-    match loss {
-        0 => binder_multiple(&partitions, &psm, results),
-        1 => lpear_multiple(&partitions, &psm, results),
-        2 => vilb_multiple(&partitions, &psm, results),
-        _ => panic!("Unsupported loss method: {}", loss),
+    let loss_function = LossFunction::from_code(loss);
+    match loss_function {
+        Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
+        Some(LossFunction::LPEAR) => lpear_multiple(&partitions, &psm, results),
+        Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
+        None => panic!("Unsupported loss method: {}", loss),
     };
 }
 
