@@ -135,45 +135,36 @@ impl<'a> Computer for BinderComputer<'a> {
     }
 }
 
-// Loss for the adjusted Rand index with the posterior expected clustering
+// First-order approximation of the expectation of loss associated with the adjusted Rand index.
 
 #[derive(Debug)]
-struct LPEARCacheUnit {
-    item: usize,
-    committed_sum: f64,
-    committed_contribution: f64,
-    speculative_sum: f64,
-    speculative_contribution: f64,
+struct AdjRandSubsetCalculations {
+    size: u32,
+    committed_sum_p: f64,
+    speculative_sum_p: f64,
 }
 
-#[derive(Debug)]
-struct LPEARSubsetCalculations {
-    cached_units: Vec<LPEARCacheUnit>,
-    committed_loss: f64,
-    speculative_loss: f64,
-}
-
-pub struct LPEARComputer<'a> {
-    subsets: Vec<LPEARSubsetCalculations>,
+pub struct AdjRandComputer<'a> {
+    subsets: Vec<AdjRandSubsetCalculations>,
     psm: &'a SquareMatrixBorrower<'a>,
 }
 
-impl<'a> LPEARComputer<'a> {
-    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> LPEARComputer<'a> {
-        LPEARComputer {
+impl<'a> AdjRandComputer<'a> {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> AdjRandComputer<'a> {
+        AdjRandComputer {
             subsets: Vec::new(),
             psm,
         }
     }
 }
 
-impl<'a> Computer for LPEARComputer<'a> {
+impl<'a> Computer for AdjRandComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
-        self.subsets.push(LPEARSubsetCalculations {
-            cached_units: Vec::new(),
-            committed_loss: 0.0,
-            speculative_loss: 0.0,
+        self.subsets.push(AdjRandSubsetCalculations {
+            size: 0,
+            committed_sum_p: 0.0,
+            speculative_sum_p: 0.0,
         })
     }
 
@@ -182,7 +173,7 @@ impl<'a> Computer for LPEARComputer<'a> {
         if subset_of_partition.n_items() == 0 {
             self.subsets[subset_index]
                 .cached_units
-                .push(LPEARCacheUnit {
+                .push(AdjRandCacheUnit {
                     item: i,
                     committed_sum: 0.0,
                     committed_contribution: 0.0,
@@ -203,7 +194,7 @@ impl<'a> Computer for LPEARComputer<'a> {
             + 1.0; // Because self.psm[(i, i)] == 1;
         self.subsets[subset_index]
             .cached_units
-            .push(LPEARCacheUnit {
+            .push(AdjRandCacheUnit {
                 item: i,
                 committed_sum: 0.0,
                 committed_contribution: 0.0,
@@ -238,7 +229,7 @@ impl<'a> Computer for LPEARComputer<'a> {
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
         for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.committed_sum -= unsafe { self.psm.get_unchecked((cu.item, i)) };
+            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
             cu.committed_contribution = cu.committed_sum.log2();
         }
         let pos = self.subsets[subset_index]
@@ -388,7 +379,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
         for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.committed_sum -= unsafe { self.psm.get_unchecked((cu.item, i)) };
+            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
             cu.committed_contribution = cu.committed_sum.log2();
         }
         let pos = self.subsets[subset_index]
@@ -641,7 +632,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     rng,
                 ),
                 LossFunction::AdjRand => minimize_once_by_salso(
-                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| LPEARComputer::new(psm)),
+                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| AdjRandComputer::new(psm)),
                     max_label,
                     psm,
                     max_scans,
@@ -688,7 +679,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                             ),
                             LossFunction::AdjRand => minimize_once_by_salso(
                                 Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
-                                    LPEARComputer::new(psm)
+                                    AdjRandComputer::new(psm)
                                 }),
                                 max_label,
                                 psm,
