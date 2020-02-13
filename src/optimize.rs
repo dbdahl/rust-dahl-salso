@@ -135,13 +135,12 @@ impl<'a> Computer for BinderComputer<'a> {
     }
 }
 
-// First-order approximation of the expectation of loss associated with the adjusted Rand index.
+// First-order approximation of the expectation of the loss associated with the adjusted Rand index.
 
 #[derive(Debug)]
 struct AdjRandSubsetCalculations {
-    size: u32,
-    committed_sum_p: f64,
-    speculative_sum_p: f64,
+    committed_loss: f64,
+    speculative_loss: f64,
 }
 
 pub struct AdjRandComputer<'a> {
@@ -162,97 +161,39 @@ impl<'a> Computer for AdjRandComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
         self.subsets.push(AdjRandSubsetCalculations {
-            size: 0,
-            committed_sum_p: 0.0,
-            speculative_sum_p: 0.0,
-        })
+            committed_loss: 0.0,
+            speculative_loss: 0.0,
+        });
     }
 
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        let subset_of_partition = &partition.subsets()[subset_index];
-        if subset_of_partition.n_items() == 0 {
-            self.subsets[subset_index]
-                .cached_units
-                .push(AdjRandCacheUnit {
-                    item: i,
-                    committed_sum: 0.0,
-                    committed_contribution: 0.0,
-                    speculative_sum: 1.0,
-                    speculative_contribution: 0.0,
-                });
-            return 0.0;
-        }
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.speculative_sum =
-                cu.committed_sum + unsafe { *self.psm.get_unchecked((cu.item, i)) };
-            cu.speculative_contribution = cu.speculative_sum.log2();
-        }
-        let sum = subset_of_partition
+        self.subsets[subset_index].speculative_loss = partition.subsets()[subset_index]
             .items()
             .iter()
-            .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) })
-            + 1.0; // Because self.psm[(i, i)] == 1;
-        self.subsets[subset_index]
-            .cached_units
-            .push(AdjRandCacheUnit {
-                item: i,
-                committed_sum: 0.0,
-                committed_contribution: 0.0,
-                speculative_sum: sum,
-                speculative_contribution: sum.log2(),
+            .fold(0.0, |s, j| {
+                s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
             });
-        let nif = subset_of_partition.n_items() as f64;
-        let s1 = (nif + 1.0) * (nif + 1.0).log2();
-        let s2 = self.subsets[subset_index]
-            .cached_units
-            .iter()
-            .fold(0.0, |s, cu| s + cu.speculative_contribution);
-        self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
-        self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
+        self.subsets[subset_index].speculative_loss
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        for (index, subset) in self.subsets.iter_mut().enumerate() {
-            if index == subset_index {
-                for cu in subset.cached_units.iter_mut() {
-                    cu.committed_sum = cu.speculative_sum;
-                    cu.committed_contribution = cu.speculative_contribution;
-                }
-            } else {
-                subset.cached_units.pop();
-            }
-        }
-        self.subsets[subset_index].committed_loss = self.subsets[subset_index].speculative_loss;
+        self.subsets[subset_index].committed_loss += self.subsets[subset_index].speculative_loss;
         partition.add_with_index(i, subset_index);
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
-            cu.committed_contribution = cu.committed_sum.log2();
-        }
-        let pos = self.subsets[subset_index]
-            .cached_units
+        self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
+            .items()
             .iter()
-            .enumerate()
-            .find(|cu| cu.1.item == i)
-            .unwrap()
-            .0;
-        self.subsets[subset_index].cached_units.swap_remove(pos);
-        self.subsets[subset_index].committed_loss =
-            match partition.subsets()[subset_index].n_items() {
-                0 => 0.0,
-                ni => {
-                    let nif = ni as f64;
-                    nif * nif.log2()
-                        - 2.0
-                            * self.subsets[subset_index]
-                                .cached_units
-                                .iter()
-                                .fold(0.0, |s, cu| s + cu.committed_contribution)
+            .fold(0.0, |s, j| {
+                let jj = *j;
+                s + if jj != i {
+                    0.5 - unsafe { *self.psm.get_unchecked((i, jj)) }
+                } else {
+                    0.0
                 }
-            };
+            });
         partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
@@ -261,8 +202,7 @@ impl<'a> Computer for AdjRandComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
+        2.0 * self.expected_loss_unnormalized() + self.psm.sum_of_triangle()
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
@@ -272,7 +212,7 @@ impl<'a> Computer for AdjRandComputer<'a> {
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        (kernel + vilb_expected_loss_constant(self.psm)) / (self.psm.n_items() as f64)
+        2.0 * kernel + self.psm.sum_of_triangle()
     }
 }
 
