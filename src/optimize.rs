@@ -821,6 +821,6 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     let minimizer = minimize_by_enumeration(f, &psm);
     let results_slice = slice::from_raw_parts_mut(results_label_ptr, ni);
     for (i, v) in minimizer.iter().enumerate() {
-        results_slice[i] = i32::try_from(*v).unwrap();
+        results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
 }
