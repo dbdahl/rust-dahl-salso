@@ -139,11 +139,16 @@ impl<'a> Computer for BinderComputer<'a> {
 
 #[derive(Debug)]
 struct AdjRandSubsetCalculations {
-    committed_loss: f64,
-    speculative_loss: f64,
+    committed_ip: f64,
+    committed_i: f64,
+    speculative_ip: f64,
+    speculative_i: f64,
 }
 
 pub struct AdjRandComputer<'a> {
+    committed_n_items: usize,
+    committed_sum_psm: f64,
+    speculative_sum_psm: f64,
     subsets: Vec<AdjRandSubsetCalculations>,
     psm: &'a SquareMatrixBorrower<'a>,
 }
@@ -151,9 +156,44 @@ pub struct AdjRandComputer<'a> {
 impl<'a> AdjRandComputer<'a> {
     pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> AdjRandComputer<'a> {
         AdjRandComputer {
+            committed_n_items: 0,
+            committed_sum_psm: 0.0,
+            speculative_sum_psm: f64::NEG_INFINITY,
             subsets: Vec::new(),
             psm,
         }
+    }
+}
+
+impl<'a> AdjRandComputer<'a> {
+    fn engine(
+        &self,
+        speculative_n_items: usize,
+        speculative_ip: f64,
+        speculative_i: f64,
+        speculative_sum_psm: f64,
+    ) -> f64 {
+        println!("speculative_n_items: {}", speculative_n_items);
+        println!("speculative_ip: {}", speculative_ip);
+        println!("speculative_i: {}", speculative_i);
+        let n_items = speculative_n_items + self.committed_n_items;
+        if n_items <= 1 {
+            return f64::INFINITY;
+        }
+        let n_choose_2 = (n_items * (n_items - 1) / 2) as f64;
+        let all_ip = speculative_ip + self.subsets.iter().fold(0.0, |s, c| s + c.committed_ip);
+        let all_i = speculative_i + self.subsets.iter().fold(0.0, |s, c| s + c.committed_i);
+        let all_p = speculative_sum_psm + self.committed_sum_psm;
+        let subtractor = all_i * all_p / n_choose_2;
+        let numerator = all_ip - subtractor;
+        let denominator = 0.5 * (all_i + all_p) - subtractor;
+        println!(
+            "all_ip all_i all_p n_choose_2 subtractor N D: {} {} {} {} {} {}/{}",
+            all_ip, all_i, all_p, n_choose_2, subtractor, numerator, denominator
+        );
+        let result = numerator / denominator;
+        println!("Score: {}", result);
+        1.0 - numerator / denominator
     }
 }
 
@@ -161,39 +201,72 @@ impl<'a> Computer for AdjRandComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
         self.subsets.push(AdjRandSubsetCalculations {
-            committed_loss: 0.0,
-            speculative_loss: 0.0,
+            committed_ip: 0.0,
+            committed_i: 0.0,
+            speculative_ip: 0.0,
+            speculative_i: 0.0,
         });
     }
 
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        self.subsets[subset_index].speculative_loss = partition.subsets()[subset_index]
+        let s = &partition.subsets()[subset_index];
+        self.subsets[subset_index].speculative_ip = s
             .items()
             .iter()
-            .fold(0.0, |s, j| {
-                s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
-            });
-        self.subsets[subset_index].speculative_loss
+            .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) });
+        self.subsets[subset_index].speculative_i = s.n_items() as f64;
+        if self.speculative_sum_psm == f64::NEG_INFINITY {
+            self.speculative_sum_psm = partition.subsets().iter().fold(0.0, |s, subset| {
+                // We use the NEG_INFINITY flag to see if we need to do the computation.
+                s + subset.items().iter().fold(0.0, |ss, j| {
+                    ss + unsafe { *self.psm.get_unchecked((i, *j)) }
+                })
+            })
+        }
+        println!("{} going into {}", i, subset_index);
+        self.engine(
+            1,
+            self.subsets[subset_index].speculative_ip,
+            self.subsets[subset_index].speculative_i,
+            self.speculative_sum_psm,
+        )
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        self.subsets[subset_index].committed_loss += self.subsets[subset_index].speculative_loss;
+        println!("Committing: {}\n----------------", i);
+        let mut sc = &mut self.subsets[subset_index];
+        sc.committed_ip += sc.speculative_ip;
+        sc.committed_i += sc.speculative_i;
+        self.committed_n_items += 1;
+        self.committed_sum_psm += self.speculative_sum_psm;
+        self.speculative_sum_psm = f64::NEG_INFINITY;
         partition.add_with_index(i, subset_index);
+        println!("Partition is: {}", partition);
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+        println!("Here I am!");
         let subset_index = partition.label_of(i).unwrap();
-        self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
+        self.subsets[subset_index].committed_ip -= partition.subsets()[subset_index]
             .items()
             .iter()
             .fold(0.0, |s, j| {
                 let jj = *j;
                 s + if jj != i {
-                    0.5 - unsafe { *self.psm.get_unchecked((i, jj)) }
+                    -unsafe { *self.psm.get_unchecked((i, jj)) }
                 } else {
                     0.0
                 }
             });
+        self.subsets[subset_index].committed_i -=
+            partition.subsets()[subset_index].n_items() as f64;
+        self.committed_n_items -= 1;
+        self.committed_sum_psm -= partition.subsets().iter().fold(0.0, |s, subset| {
+            // We use the NEG_INFINITY flag to see if we need to do the computation.
+            s + subset.items().iter().fold(0.0, |ss, j| {
+                ss + unsafe { *self.psm.get_unchecked((i, *j)) }
+            })
+        });
         partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
@@ -202,17 +275,16 @@ impl<'a> Computer for AdjRandComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        2.0 * self.expected_loss_unnormalized() + self.psm.sum_of_triangle()
+        println!("Final:");
+        self.engine(0, 0.0, 0.0, 0.0)
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
-        self.subsets
-            .iter()
-            .fold(0.0, |s, subset| s + subset.committed_loss)
+        self.engine(0, 0.0, 0.0, 0.0)
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        2.0 * kernel + self.psm.sum_of_triangle()
+        kernel
     }
 }
 
