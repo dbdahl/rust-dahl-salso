@@ -173,9 +173,6 @@ impl<'a> AdjRandComputer<'a> {
         speculative_i: f64,
         speculative_sum_psm: f64,
     ) -> f64 {
-        println!("speculative_n_items: {}", speculative_n_items);
-        println!("speculative_ip: {}", speculative_ip);
-        println!("speculative_i: {}", speculative_i);
         let n_items = speculative_n_items + self.committed_n_items;
         if n_items <= 1 {
             return f64::INFINITY;
@@ -187,12 +184,6 @@ impl<'a> AdjRandComputer<'a> {
         let subtractor = all_i * all_p / n_choose_2;
         let numerator = all_ip - subtractor;
         let denominator = 0.5 * (all_i + all_p) - subtractor;
-        println!(
-            "all_ip all_i all_p n_choose_2 subtractor N D: {} {} {} {} {} {}/{}",
-            all_ip, all_i, all_p, n_choose_2, subtractor, numerator, denominator
-        );
-        let result = numerator / denominator;
-        println!("Score: {}", result);
         1.0 - numerator / denominator
     }
 }
@@ -223,7 +214,6 @@ impl<'a> Computer for AdjRandComputer<'a> {
                 })
             })
         }
-        println!("{} going into {}", i, subset_index);
         self.engine(
             1,
             self.subsets[subset_index].speculative_ip,
@@ -233,7 +223,6 @@ impl<'a> Computer for AdjRandComputer<'a> {
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        println!("Committing: {}\n----------------", i);
         let mut sc = &mut self.subsets[subset_index];
         sc.committed_ip += sc.speculative_ip;
         sc.committed_i += sc.speculative_i;
@@ -241,11 +230,9 @@ impl<'a> Computer for AdjRandComputer<'a> {
         self.committed_sum_psm += self.speculative_sum_psm;
         self.speculative_sum_psm = f64::NEG_INFINITY;
         partition.add_with_index(i, subset_index);
-        println!("Partition is: {}", partition);
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
-        println!("Here I am!");
         let subset_index = partition.label_of(i).unwrap();
         self.subsets[subset_index].committed_ip -= partition.subsets()[subset_index]
             .items()
@@ -280,7 +267,6 @@ impl<'a> Computer for AdjRandComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        println!("Final:");
         self.engine(0, 0.0, 0.0, 0.0)
     }
 
@@ -851,7 +837,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let mut rng = mk_rng_isaac(seed_ptr);
     let loss_function = LossFunction::from_code(loss);
     if loss_function.is_none() {
-        panic!("Unsupported loss function code.");
+        panic!("Unsupported loss method: code = {}", loss);
     }
     let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
         minimize_by_salso(
@@ -893,7 +879,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
         Some(LossFunction::Binder) => binder_single,
         Some(LossFunction::AdjRand) => adjrand_single,
         Some(LossFunction::VIlb) => vilb_single_kernel,
-        None => panic!("Unsupported loss method: {}", loss),
+        None => panic!("Unsupported loss method: code = {}", loss),
     };
     let minimizer = minimize_by_enumeration(f, &psm);
     let results_slice = slice::from_raw_parts_mut(results_label_ptr, ni);
