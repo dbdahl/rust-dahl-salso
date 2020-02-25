@@ -253,18 +253,23 @@ impl<'a> Computer for AdjRandComputer<'a> {
             .fold(0.0, |s, j| {
                 let jj = *j;
                 s + if jj != i {
-                    -unsafe { *self.psm.get_unchecked((i, jj)) }
+                    unsafe { *self.psm.get_unchecked((i, jj)) }
                 } else {
                     0.0
                 }
             });
         self.subsets[subset_index].committed_i -=
-            partition.subsets()[subset_index].n_items() as f64;
+            (partition.subsets()[subset_index].n_items() - 1) as f64;
         self.committed_n_items -= 1;
         self.committed_sum_psm -= partition.subsets().iter().fold(0.0, |s, subset| {
             // We use the NEG_INFINITY flag to see if we need to do the computation.
             s + subset.items().iter().fold(0.0, |ss, j| {
-                ss + unsafe { *self.psm.get_unchecked((i, *j)) }
+                let jj = *j;
+                ss + if jj != i {
+                    unsafe { *self.psm.get_unchecked((i, jj)) }
+                } else {
+                    0.0
+                }
             })
         });
         partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
