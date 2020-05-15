@@ -623,6 +623,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
     loop {
         let result = if !parallel {
             match loss_function {
+                LossFunction::VI => panic!("Not yet implemented."),
                 LossFunction::VIlb => minimize_once_by_salso(
                     Box::new(|psm: &'a SquareMatrixBorrower<'a>| VarOfInfoLBComputer::new(psm)),
                     max_label,
@@ -667,6 +668,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                     s.spawn(move |_| {
                         let result = match loss_function {
+                            LossFunction::VI => panic!("Not yet implemented."),
                             LossFunction::VIlb => minimize_once_by_salso(
                                 Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
                                     VarOfInfoLBComputer::new(psm)
@@ -879,6 +881,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
         Some(LossFunction::Binder) => binder_single,
         Some(LossFunction::AdjRand) => adjrand_single,
         Some(LossFunction::VIlb) => vilb_single_kernel,
+        Some(LossFunction::VI) => panic!("Not yet implemented."),
         None => panic!("Unsupported loss method: code = {}", loss),
     };
     let minimizer = minimize_by_enumeration(f, &psm);

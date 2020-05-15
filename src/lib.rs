@@ -8,11 +8,14 @@ pub mod loss;
 pub mod optimize;
 pub mod psm;
 
+use dahl_partition::*;
+
 #[derive(Debug, Copy, Clone)]
 pub enum LossFunction {
     Binder,
     AdjRand,
     VIlb,
+    VI,
 }
 
 impl LossFunction {
@@ -21,7 +24,100 @@ impl LossFunction {
             0 => Some(LossFunction::Binder),
             1 => Some(LossFunction::AdjRand),
             2 => Some(LossFunction::VIlb),
+            3 => Some(LossFunction::VI),
             _ => None,
         }
+    }
+}
+
+pub struct ConfusionMatrix<'a> {
+    data: Vec<u32>,
+    fixed_partition: &'a Partition,
+    k1_plus_one: usize,
+    k2: usize,
+}
+
+impl<'a> ConfusionMatrix<'a> {
+    pub fn new(fixed_partition: &'a Partition, dynamic_partition: &'a Partition) -> Self {
+        assert!(fixed_partition.subsets_are_exhaustive());
+        let n_items = fixed_partition.n_items();
+        assert_eq!(dynamic_partition.n_items(), n_items);
+        let k1_plus_one = fixed_partition.n_subsets() + 1;
+        let k2 = dynamic_partition.n_subsets();
+        let mut x = Self {
+            data: vec![0; k1_plus_one * (k2 + 1)],
+            fixed_partition,
+            k1_plus_one,
+            k2,
+        };
+        for item_index in 0..n_items {
+            match dynamic_partition.label_of(item_index) {
+                Some(subset_index) => x.tally(item_index, subset_index),
+                None => {}
+            }
+        }
+        x
+    }
+
+    pub fn k1(&self) -> usize {
+        self.k1_plus_one - 1
+    }
+
+    pub fn k2(&self) -> usize {
+        self.k2
+    }
+
+    pub fn n(&self) -> u32 {
+        self.data[0]
+    }
+
+    pub fn n1(&self, i: usize) -> u32 {
+        self.data[i + 1]
+    }
+
+    pub fn p1(&self, i: usize) -> f64 {
+        (self.n1(i) as f64) / (self.n() as f64)
+    }
+
+    pub fn n2(&self, j: usize) -> u32 {
+        self.data[self.k1_plus_one * (j + 1)]
+    }
+
+    pub fn p2(&self, j: usize) -> f64 {
+        (self.n2(j) as f64) / (self.n() as f64)
+    }
+
+    pub fn n12(&self, i: usize, j: usize) -> u32 {
+        self.data[self.k1_plus_one * (j + 1) + (i + 1)]
+    }
+
+    pub fn p12(&self, i: usize, j: usize) -> f64 {
+        (self.n12(i, j) as f64) / (self.n() as f64)
+    }
+
+    pub fn add(&mut self, dynamic_partition: &mut Partition, item_index: usize) {
+        let subset_index = dynamic_partition.n_subsets();
+        dynamic_partition.add(item_index);
+        self.data.extend(vec![0; self.k1_plus_one].iter());
+        self.tally(item_index, subset_index);
+    }
+
+    pub fn add_with_index(
+        &mut self,
+        dynamic_partition: &mut Partition,
+        item_index: usize,
+        subset_index: usize,
+    ) {
+        dynamic_partition.add_with_index(item_index, subset_index);
+        self.tally(item_index, subset_index);
+    }
+
+    fn tally(&mut self, item_index: usize, subset_index: usize) {
+        self.data[0] += 1;
+        let offset = self.k1_plus_one * (subset_index + 1);
+        self.data[offset] += 1;
+        let ii_plus_one = self.fixed_partition.label_of(item_index).unwrap() + 1;
+        self.data[ii_plus_one] += 1;
+        self.data[offset + ii_plus_one] += 1;
     }
 }

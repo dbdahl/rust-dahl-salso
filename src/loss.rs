@@ -1,5 +1,6 @@
 use dahl_partition::*;
 
+use crate::ConfusionMatrix;
 use crate::LossFunction;
 use std::slice;
 
@@ -96,10 +97,52 @@ pub fn adjrand_multiple(
             }
         }
         let correc = (sum_i * sum_p) / no2;
-        unsafe {
-            *results.get_unchecked_mut(k) =
-                1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc)
-        };
+        let adjrand = 1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc);
+        unsafe { *results.get_unchecked_mut(k) = adjrand };
+    }
+}
+
+pub fn vi_single(partition: &Partition, draws: &[Partition]) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::new(partition, draw))
+        .collect();
+    let mut sum = 0.0;
+    for cm in cms {
+        for k1 in 0..cm.k1() {
+            let p1 = cm.p1(k1);
+            if p1 != 0.0 {
+                sum += p1 * p1.log2();
+            }
+        }
+        for k2 in 0..cm.k2() {
+            let p2 = cm.p2(k2);
+            if p2 != 0.0 {
+                sum += p2 * p2.log2();
+            }
+            for k1 in 0..cm.k1() {
+                let p12 = cm.p12(k1, k2);
+                if p12 != 0.0 {
+                    sum -= 2.0 * p12 * p12.log2();
+                }
+            }
+        }
+    }
+    sum / (draws.len() as f64)
+}
+
+pub fn vi_multiple(
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let ni = partitions.n_items();
+    assert_eq!(ni, draws.n_items());
+    let partitions2 = partitions.get_all();
+    let draws2 = draws.get_all();
+    for k in 0..partitions2.len() {
+        let vi = vi_single(&partitions2[k], &draws2[..]);
+        unsafe { *results.get_unchecked_mut(k) = vi };
     }
 }
 
@@ -122,14 +165,14 @@ pub fn vilb_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f6
     let mut sum = 0.0;
     for i in 0..ni {
         let mut s1 = 0u32;
-        let mut s3 = 0.0;
+        let mut s2 = 0.0;
         for j in 0..ni {
             if unsafe { *partition.get_unchecked(i) == *partition.get_unchecked(j) } {
                 s1 += 1;
-                s3 += unsafe { *psm.get_unchecked((i, j)) };
+                s2 += unsafe { *psm.get_unchecked((i, j)) };
             }
         }
-        sum += f64::from(s1).log2() - 2.0 * s3.log2();
+        sum += (s1 as f64).log2() - 2.0 * s2.log2();
     }
     sum
 }
@@ -147,17 +190,17 @@ pub fn vilb_single_kernel_for_partial_partition(
             continue;
         }
         let mut s1 = 0u32;
-        let mut s3 = 0.0;
+        let mut s2 = 0.0;
         for j in 0..ni {
             if labels[j].is_none() {
                 continue;
             }
             if partition.label_of(i) == partition.label_of(j) {
                 s1 += 1;
-                s3 += unsafe { *psm.get_unchecked((i, j)) };
+                s2 += unsafe { *psm.get_unchecked((i, j)) };
             }
         }
-        sum += f64::from(s1).log2() - 2.0 * s3.log2();
+        sum += (s1 as f64).log2() - 2.0 * s2.log2();
     }
     sum
 }
@@ -186,9 +229,10 @@ pub fn vilb_multiple(
                     s3 += unsafe { *psm.get_unchecked((i, j)) };
                 }
             }
-            sum += f64::from(s1).log2() - 2.0 * s3.log2();
+            sum += (s1 as f64).log2() - 2.0 * s3.log2();
         }
-        unsafe { *results.get_unchecked_mut(k) = sum / (psm.n_items() as f64) };
+        let vilb = sum / (psm.n_items() as f64);
+        unsafe { *results.get_unchecked_mut(k) = vilb };
     }
 }
 
@@ -198,19 +242,24 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     n_items: i32,
     partition_ptr: *mut i32,
     psm_ptr: *mut f64,
+    n_draws: i32,
+    draws_ptr: *mut i32,
     loss: i32,
     results_ptr: *mut f64,
 ) {
     let np = n_partitions as usize;
     let ni = n_items as usize;
+    let nd = n_draws as usize;
     let partitions = PartitionsHolderBorrower::from_ptr(partition_ptr, np, ni, true);
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
+    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, ni, true);
     let results = slice::from_raw_parts_mut(results_ptr, np);
     let loss_function = LossFunction::from_code(loss);
     match loss_function {
         Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
         Some(LossFunction::AdjRand) => adjrand_multiple(&partitions, &psm, results),
         Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
+        Some(LossFunction::VI) => vi_multiple(&partitions, &draws, results),
         None => panic!("Unsupported loss method: {}", loss),
     };
 }
@@ -232,35 +281,35 @@ mod tests_loss {
         let psm_view = &psm.view();
         let mut results = vec![0.0; n_partitions];
         binder_multiple(samples_view, psm_view, &mut results[..]);
-        for i in 0..n_partitions {
+        for k in 0..n_partitions {
             assert_relative_eq!(
-                binder_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
-                results[i]
+                binder_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
+                results[k]
             );
         }
         adjrand_multiple(samples_view, psm_view, &mut results[..]);
-        for i in 0..n_partitions {
+        for k in 0..n_partitions {
             assert_relative_eq!(
-                adjrand_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
-                results[i]
+                adjrand_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
+                results[k]
             );
         }
         vilb_multiple(samples_view, psm_view, &mut results[..]);
-        for i in 0..n_partitions {
+        for k in 0..n_partitions {
             assert_ulps_eq!(
-                vilb_single(&samples_view.get(i).labels_via_copying()[..], psm_view),
-                results[i]
+                vilb_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
+                results[k]
             );
         }
-        for i in 1..n_partitions {
+        for k in 1..n_partitions {
             assert_ulps_eq!(
                 ((1.0 / (n_items as f64))
-                    * (vilb_single_kernel(&samples_view.get(i).labels_via_copying()[..], psm_view)
+                    * (vilb_single_kernel(&samples_view.get(k).labels_via_copying()[..], psm_view)
                         - vilb_single_kernel(
-                            &samples_view.get(i - 1).labels_via_copying()[..],
+                            &samples_view.get(k - 1).labels_via_copying()[..],
                             psm_view
                         ))) as f32,
-                (results[i] - results[i - 1]) as f32,
+                (results[k] - results[k - 1]) as f32,
             );
         }
     }
