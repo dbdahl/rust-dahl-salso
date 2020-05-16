@@ -30,15 +30,41 @@ impl LossFunction {
     }
 }
 
+pub struct Log2Cache {
+    cache: Vec<f64>,
+}
+
+impl Log2Cache {
+    pub fn new(n: usize) -> Self {
+        let mut cache = Vec::with_capacity(n + 1);
+        cache.push(0.0);
+        for i in 1..=n {
+            cache.push((i as f64).log2());
+        }
+        Self { cache }
+    }
+
+    pub fn plog2p(&self, x: u32, n: u32) -> f64 {
+        let p = (x as f64) / (n as f64);
+        let log2p = self.cache[x as usize] - self.cache[n as usize];
+        p * log2p
+    }
+}
+
 pub struct ConfusionMatrix<'a> {
     data: Vec<u32>,
     fixed_partition: &'a Partition,
     k1_plus_one: usize,
     k2: usize,
+    cache: &'a Log2Cache,
 }
 
 impl<'a> ConfusionMatrix<'a> {
-    pub fn new(fixed_partition: &'a Partition, dynamic_partition: &'a Partition) -> Self {
+    pub fn new(
+        fixed_partition: &'a Partition,
+        dynamic_partition: &'a Partition,
+        cache: &'a Log2Cache,
+    ) -> Self {
         assert!(fixed_partition.subsets_are_exhaustive());
         let n_items = fixed_partition.n_items();
         assert_eq!(dynamic_partition.n_items(), n_items);
@@ -49,6 +75,7 @@ impl<'a> ConfusionMatrix<'a> {
             fixed_partition,
             k1_plus_one,
             k2,
+            cache,
         };
         for item_index in 0..n_items {
             match dynamic_partition.label_of(item_index) {
@@ -80,12 +107,7 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn plogp1(&self, i: usize) -> f64 {
-        if self.n1(i) == 0 {
-            0.0
-        } else {
-            let p = (self.n1(i) as f64) / (self.n() as f64);
-            p * p.log2()
-        }
+        self.cache.plog2p(self.n1(i), self.n())
     }
 
     pub fn n2(&self, j: usize) -> u32 {
@@ -97,12 +119,7 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn plogp2(&self, j: usize) -> f64 {
-        if self.n2(j) == 0 {
-            0.0
-        } else {
-            let p = (self.n2(j) as f64) / (self.n() as f64);
-            p * p.log2()
-        }
+        self.cache.plog2p(self.n2(j), self.n())
     }
 
     pub fn n12(&self, i: usize, j: usize) -> u32 {
@@ -114,12 +131,7 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn plogp12(&self, i: usize, j: usize) -> f64 {
-        if self.n12(i, j) == 0 {
-            0.0
-        } else {
-            let p = (self.n12(i, j) as f64) / (self.n() as f64);
-            p * p.log2()
-        }
+        self.cache.plog2p(self.n12(i, j), self.n())
     }
 
     pub fn add(&mut self, dynamic_partition: &mut Partition, item_index: usize) {

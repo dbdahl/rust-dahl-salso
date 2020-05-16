@@ -1,6 +1,7 @@
 use dahl_partition::*;
 
 use crate::ConfusionMatrix;
+use crate::Log2Cache;
 use crate::LossFunction;
 use std::slice;
 
@@ -102,10 +103,10 @@ pub fn adjrand_multiple(
     }
 }
 
-pub fn vi_single(partition: &Partition, draws: &[Partition]) -> f64 {
+pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::new(partition, draw))
+        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
         .collect();
     let mut sum = 0.0;
     for cm in cms {
@@ -131,8 +132,9 @@ pub fn vi_multiple(
     assert_eq!(ni, draws.n_items());
     let partitions2 = partitions.get_all();
     let draws2 = draws.get_all();
+    let cache = Log2Cache::new(ni);
     for k in 0..partitions2.len() {
-        let vi = vi_single(&partitions2[k], &draws2[..]);
+        let vi = vi_single(&partitions2[k], &draws2[..], &cache);
         unsafe { *results.get_unchecked_mut(k) = vi };
     }
 }
