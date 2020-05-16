@@ -79,6 +79,15 @@ impl<'a> ConfusionMatrix<'a> {
         (self.n1(i) as f64) / (self.n() as f64)
     }
 
+    pub fn plogp1(&self, i: usize) -> f64 {
+        if self.n1(i) == 0 {
+            0.0
+        } else {
+            let p = (self.n1(i) as f64) / (self.n() as f64);
+            p * p.log2()
+        }
+    }
+
     pub fn n2(&self, j: usize) -> u32 {
         self.data[self.k1_plus_one * (j + 1)]
     }
@@ -87,12 +96,30 @@ impl<'a> ConfusionMatrix<'a> {
         (self.n2(j) as f64) / (self.n() as f64)
     }
 
+    pub fn plogp2(&self, j: usize) -> f64 {
+        if self.n2(j) == 0 {
+            0.0
+        } else {
+            let p = (self.n2(j) as f64) / (self.n() as f64);
+            p * p.log2()
+        }
+    }
+
     pub fn n12(&self, i: usize, j: usize) -> u32 {
         self.data[self.k1_plus_one * (j + 1) + (i + 1)]
     }
 
     pub fn p12(&self, i: usize, j: usize) -> f64 {
         (self.n12(i, j) as f64) / (self.n() as f64)
+    }
+
+    pub fn plogp12(&self, i: usize, j: usize) -> f64 {
+        if self.n12(i, j) == 0 {
+            0.0
+        } else {
+            let p = (self.n12(i, j) as f64) / (self.n() as f64);
+            p * p.log2()
+        }
     }
 
     pub fn add(&mut self, dynamic_partition: &mut Partition, item_index: usize) {

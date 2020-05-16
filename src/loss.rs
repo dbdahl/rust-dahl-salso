@@ -110,21 +110,12 @@ pub fn vi_single(partition: &Partition, draws: &[Partition]) -> f64 {
     let mut sum = 0.0;
     for cm in cms {
         for k1 in 0..cm.k1() {
-            let p1 = cm.p1(k1);
-            if p1 != 0.0 {
-                sum += p1 * p1.log2();
-            }
+            sum += cm.plogp1(k1);
         }
         for k2 in 0..cm.k2() {
-            let p2 = cm.p2(k2);
-            if p2 != 0.0 {
-                sum += p2 * p2.log2();
-            }
+            sum += cm.plogp2(k2);
             for k1 in 0..cm.k1() {
-                let p12 = cm.p12(k1, k2);
-                if p12 != 0.0 {
-                    sum -= 2.0 * p12 * p12.log2();
-                }
+                sum -= 2.0 * cm.plogp12(k1, k2);
             }
         }
     }
