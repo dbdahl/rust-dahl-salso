@@ -56,7 +56,7 @@ pub fn binder_multiple(
     }
 }
 
-pub fn adjrand_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn omariapprox_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum_p = 0.0;
@@ -78,7 +78,7 @@ pub fn adjrand_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc)
 }
 
-pub fn adjrand_multiple(
+pub fn omariapprox_multiple(
     partitions: &PartitionsHolderBorrower,
     psm: &SquareMatrixBorrower,
     results: &mut [f64],
@@ -105,8 +105,8 @@ pub fn adjrand_multiple(
             }
         }
         let correc = (sum_i * sum_p) / no2;
-        let adjrand = 1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc);
-        unsafe { *results.get_unchecked_mut(k) = adjrand };
+        let omariapprox = 1.0 - (sum_ip - correc) / (0.5 * (sum_p + sum_i) - correc);
+        unsafe { *results.get_unchecked_mut(k) = omariapprox };
     }
 }
 
@@ -236,6 +236,42 @@ pub fn vi_multiple(
     }
 }
 
+pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
+        .collect();
+    let mut sum = 0.0;
+    for cm in cms {
+        for k1 in 0..cm.k1() {
+            sum += cm.plogp1(k1);
+        }
+        for k2 in 0..cm.k2() {
+            sum += cm.plogp2(k2);
+            for k1 in 0..cm.k1() {
+                sum -= 2.0 * cm.plogp12(k1, k2);
+            }
+        }
+    }
+    sum / (draws.len() as f64)
+}
+
+pub fn omari_multiple(
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let ni = partitions.n_items();
+    assert_eq!(ni, draws.n_items());
+    let partitions2 = partitions.get_all();
+    let draws2 = draws.get_all();
+    let cache = Log2Cache::new(ni);
+    for k in 0..partitions2.len() {
+        let vi = omari_single(&partitions2[k], &draws2[..], &cache);
+        unsafe { *results.get_unchecked_mut(k) = vi };
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn dahl_salso__expected_loss(
     n_partitions: i32,
@@ -257,9 +293,10 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let loss_function = LossFunction::from_code(loss);
     match loss_function {
         Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
-        Some(LossFunction::AdjRand) => adjrand_multiple(&partitions, &psm, results),
-        Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
+        Some(LossFunction::OneMinusARI) => omari_multiple(&partitions, &draws, results),
+        Some(LossFunction::OneMinusARIapprox) => omariapprox_multiple(&partitions, &psm, results),
         Some(LossFunction::VI) => vi_multiple(&partitions, &draws, results),
+        Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
         None => panic!("Unsupported loss method: {}", loss),
     };
 }
@@ -287,10 +324,10 @@ mod tests_loss {
                 results[k]
             );
         }
-        adjrand_multiple(samples_view, psm_view, &mut results[..]);
+        omariapprox_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
             assert_relative_eq!(
-                adjrand_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
+                omariapprox_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
                 results[k]
             );
         }
@@ -313,5 +350,6 @@ mod tests_loss {
             );
         }
         vi_multiple(samples_view, samples_view, &mut results[..]);
+        omari_multiple(samples_view, samples_view, &mut results[..]);
     }
 }

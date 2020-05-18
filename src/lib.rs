@@ -13,18 +13,20 @@ use dahl_partition::*;
 #[derive(Debug, Copy, Clone)]
 pub enum LossFunction {
     Binder,
-    AdjRand,
-    VIlb,
+    OneMinusARI,
+    OneMinusARIapprox,
     VI,
+    VIlb,
 }
 
 impl LossFunction {
     fn from_code(x: i32) -> Option<LossFunction> {
         match x {
             0 => Some(LossFunction::Binder),
-            1 => Some(LossFunction::AdjRand),
-            2 => Some(LossFunction::VIlb),
+            1 => Some(LossFunction::OneMinusARI),
+            2 => Some(LossFunction::OneMinusARIapprox),
             3 => Some(LossFunction::VI),
+            4 => Some(LossFunction::VIlb),
             _ => None,
         }
     }
