@@ -305,5 +305,6 @@ mod tests_loss {
                 (results[k] - results[k - 1]) as f32,
             );
         }
+        vi_multiple(samples_view, samples_view, &mut results[..]);
     }
 }

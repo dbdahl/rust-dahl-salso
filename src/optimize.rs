@@ -1,9 +1,7 @@
 extern crate num_cpus;
 extern crate rand;
 
-use crate::loss::{
-    adjrand_single, binder_single, vilb_expected_loss_constant, vilb_single_kernel,
-};
+use crate::loss::{adjrand_single, binder_single, vilb_expected_loss_constant, vilb_single_kernel};
 use crate::LossFunction;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
@@ -457,7 +455,6 @@ pub struct VarOfInfoComputer<'a> {
 
 impl<'a> VarOfInfoComputer<'a> {
     pub fn new(draws: &'a [Partition], psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoComputer<'a> {
-        println!("Here I am!");
         VarOfInfoComputer {
             subsets: Vec::new(),
             psm,
@@ -1098,7 +1095,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
         Some(LossFunction::Binder) => binder_single,
         Some(LossFunction::AdjRand) => adjrand_single,
         Some(LossFunction::VIlb) => vilb_single_kernel,
-        Some(LossFunction::VI) => panic!("Not yet implemented."),
+        Some(LossFunction::VI) => panic!("No implementation for VI."),
         None => panic!("Unsupported loss method: code = {}", loss),
     };
     let minimizer = minimize_by_enumeration(f, &psm);
