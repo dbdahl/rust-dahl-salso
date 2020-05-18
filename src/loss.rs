@@ -103,42 +103,6 @@ pub fn adjrand_multiple(
     }
 }
 
-pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
-        .collect();
-    let mut sum = 0.0;
-    for cm in cms {
-        for k1 in 0..cm.k1() {
-            sum += cm.plogp1(k1);
-        }
-        for k2 in 0..cm.k2() {
-            sum += cm.plogp2(k2);
-            for k1 in 0..cm.k1() {
-                sum -= 2.0 * cm.plogp12(k1, k2);
-            }
-        }
-    }
-    sum / (draws.len() as f64)
-}
-
-pub fn vi_multiple(
-    partitions: &PartitionsHolderBorrower,
-    draws: &PartitionsHolderBorrower,
-    results: &mut [f64],
-) {
-    let ni = partitions.n_items();
-    assert_eq!(ni, draws.n_items());
-    let partitions2 = partitions.get_all();
-    let draws2 = draws.get_all();
-    let cache = Log2Cache::new(ni);
-    for k in 0..partitions2.len() {
-        let vi = vi_single(&partitions2[k], &draws2[..], &cache);
-        unsafe { *results.get_unchecked_mut(k) = vi };
-    }
-}
-
 pub fn vilb_expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
     let ni = psm.n_items();
     let mut s1: f64 = 0.0;
@@ -229,14 +193,50 @@ pub fn vilb_multiple(
     }
 }
 
+pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
+        .collect();
+    let mut sum = 0.0;
+    for cm in cms {
+        for k1 in 0..cm.k1() {
+            sum += cm.plogp1(k1);
+        }
+        for k2 in 0..cm.k2() {
+            sum += cm.plogp2(k2);
+            for k1 in 0..cm.k1() {
+                sum -= 2.0 * cm.plogp12(k1, k2);
+            }
+        }
+    }
+    sum / (draws.len() as f64)
+}
+
+pub fn vi_multiple(
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let ni = partitions.n_items();
+    assert_eq!(ni, draws.n_items());
+    let partitions2 = partitions.get_all();
+    let draws2 = draws.get_all();
+    let cache = Log2Cache::new(ni);
+    for k in 0..partitions2.len() {
+        let vi = vi_single(&partitions2[k], &draws2[..], &cache);
+        unsafe { *results.get_unchecked_mut(k) = vi };
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn dahl_salso__expected_loss(
     n_partitions: i32,
     n_items: i32,
     partition_ptr: *mut i32,
-    psm_ptr: *mut f64,
     n_draws: i32,
     draws_ptr: *mut i32,
+    psm_ptr: *mut f64,
     loss: i32,
     results_ptr: *mut f64,
 ) {
@@ -244,8 +244,8 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let ni = n_items as usize;
     let nd = n_draws as usize;
     let partitions = PartitionsHolderBorrower::from_ptr(partition_ptr, np, ni, true);
-    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, ni, true);
+    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let results = slice::from_raw_parts_mut(results_ptr, np);
     let loss_function = LossFunction::from_code(loss);
     match loss_function {

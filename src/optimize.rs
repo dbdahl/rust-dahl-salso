@@ -1,7 +1,9 @@
 extern crate num_cpus;
 extern crate rand;
 
-use crate::loss::{adjrand_single, binder_single, vilb_expected_loss_constant, vilb_single_kernel};
+use crate::loss::{
+    adjrand_single, binder_single, vilb_expected_loss_constant, vilb_single_kernel,
+};
 use crate::LossFunction;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
@@ -282,7 +284,7 @@ impl<'a> Computer for AdjRandComputer<'a> {
 // Lower bound of the expectation of variation of information loss
 
 #[derive(Debug)]
-struct VarOfInforLBCacheUnit {
+struct VarOfInfoLBCacheUnit {
     item: usize,
     committed_sum: f64,
     committed_contribution: f64,
@@ -292,7 +294,7 @@ struct VarOfInforLBCacheUnit {
 
 #[derive(Debug)]
 struct VarOfInfoLBSubsetCalculations {
-    cached_units: Vec<VarOfInforLBCacheUnit>,
+    cached_units: Vec<VarOfInfoLBCacheUnit>,
     committed_loss: f64,
     speculative_loss: f64,
 }
@@ -326,7 +328,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
         if subset_of_partition.n_items() == 0 {
             self.subsets[subset_index]
                 .cached_units
-                .push(VarOfInforLBCacheUnit {
+                .push(VarOfInfoLBCacheUnit {
                     item: i,
                     committed_sum: 0.0,
                     committed_contribution: 0.0,
@@ -347,7 +349,160 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             + 1.0; // Because self.psm[(i, i)] == 1;
         self.subsets[subset_index]
             .cached_units
-            .push(VarOfInforLBCacheUnit {
+            .push(VarOfInfoLBCacheUnit {
+                item: i,
+                committed_sum: 0.0,
+                committed_contribution: 0.0,
+                speculative_sum: sum,
+                speculative_contribution: sum.log2(),
+            });
+        let nif = subset_of_partition.n_items() as f64;
+        let s1 = (nif + 1.0) * (nif + 1.0).log2();
+        let s2 = self.subsets[subset_index]
+            .cached_units
+            .iter()
+            .fold(0.0, |s, cu| s + cu.speculative_contribution);
+        self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
+        self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
+    }
+
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+        for (index, subset) in self.subsets.iter_mut().enumerate() {
+            if index == subset_index {
+                for cu in subset.cached_units.iter_mut() {
+                    cu.committed_sum = cu.speculative_sum;
+                    cu.committed_contribution = cu.speculative_contribution;
+                }
+            } else {
+                subset.cached_units.pop();
+            }
+        }
+        self.subsets[subset_index].committed_loss = self.subsets[subset_index].speculative_loss;
+        partition.add_with_index(i, subset_index);
+    }
+
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+        let subset_index = partition.label_of(i).unwrap();
+        for cu in self.subsets[subset_index].cached_units.iter_mut() {
+            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
+            cu.committed_contribution = cu.committed_sum.log2();
+        }
+        let pos = self.subsets[subset_index]
+            .cached_units
+            .iter()
+            .enumerate()
+            .find(|cu| cu.1.item == i)
+            .unwrap()
+            .0;
+        self.subsets[subset_index].cached_units.swap_remove(pos);
+        self.subsets[subset_index].committed_loss =
+            match partition.subsets()[subset_index].n_items() {
+                0 => 0.0,
+                ni => {
+                    let nif = ni as f64;
+                    nif * nif.log2()
+                        - 2.0
+                            * self.subsets[subset_index]
+                                .cached_units
+                                .iter()
+                                .fold(0.0, |s, cu| s + cu.committed_contribution)
+                }
+            };
+        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            self.subsets.swap_remove(killed_subset_index);
+            assert_eq!(moved_subset_index, self.subsets.len());
+        });
+        subset_index
+    }
+
+    fn expected_loss(&self) -> f64 {
+        let nif = self.psm.n_items() as f64;
+        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
+    }
+
+    fn expected_loss_unnormalized(&self) -> f64 {
+        self.subsets
+            .iter()
+            .fold(0.0, |s, subset| s + subset.committed_loss)
+    }
+
+    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+        (kernel + vilb_expected_loss_constant(self.psm)) / (self.psm.n_items() as f64)
+    }
+}
+
+// Variation of information loss
+
+#[derive(Debug)]
+struct VarOfInfoCacheUnit {
+    item: usize,
+    committed_sum: f64,
+    committed_contribution: f64,
+    speculative_sum: f64,
+    speculative_contribution: f64,
+}
+
+#[derive(Debug)]
+struct VarOfInfoSubsetCalculations {
+    cached_units: Vec<VarOfInfoCacheUnit>,
+    committed_loss: f64,
+    speculative_loss: f64,
+}
+
+pub struct VarOfInfoComputer<'a> {
+    subsets: Vec<VarOfInfoSubsetCalculations>,
+    psm: &'a SquareMatrixBorrower<'a>,
+    draws: &'a [Partition],
+}
+
+impl<'a> VarOfInfoComputer<'a> {
+    pub fn new(draws: &'a [Partition], psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoComputer<'a> {
+        println!("Here I am!");
+        VarOfInfoComputer {
+            subsets: Vec::new(),
+            psm,
+            draws,
+        }
+    }
+}
+
+impl<'a> Computer for VarOfInfoComputer<'a> {
+    fn new_subset(&mut self, partition: &mut Partition) {
+        partition.new_subset();
+        self.subsets.push(VarOfInfoSubsetCalculations {
+            cached_units: Vec::new(),
+            committed_loss: 0.0,
+            speculative_loss: 0.0,
+        })
+    }
+
+    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
+        let subset_of_partition = &partition.subsets()[subset_index];
+        if subset_of_partition.n_items() == 0 {
+            self.subsets[subset_index]
+                .cached_units
+                .push(VarOfInfoCacheUnit {
+                    item: i,
+                    committed_sum: 0.0,
+                    committed_contribution: 0.0,
+                    speculative_sum: 1.0,
+                    speculative_contribution: 0.0,
+                });
+            return 0.0;
+        }
+        for cu in self.subsets[subset_index].cached_units.iter_mut() {
+            cu.speculative_sum =
+                cu.committed_sum + unsafe { *self.psm.get_unchecked((cu.item, i)) };
+            cu.speculative_contribution = cu.speculative_sum.log2();
+        }
+        let sum = subset_of_partition
+            .items()
+            .iter()
+            .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) })
+            + 1.0; // Because self.psm[(i, i)] == 1;
+        self.subsets[subset_index]
+            .cached_units
+            .push(VarOfInfoCacheUnit {
                 item: i,
                 committed_sum: 0.0,
                 committed_contribution: 0.0,
@@ -488,8 +643,9 @@ fn micro_optimized_allocation<T: Rng, U: Computer>(
 }
 
 pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
-    computer_factory: Box<dyn Fn(&'a SquareMatrixBorrower<'a>) -> U>,
+    computer_factory: Box<dyn Fn(Option<&'a [Partition]>, &'a SquareMatrixBorrower<'a>) -> U>,
     max_label: usize,
+    draws: Option<&'a [Partition]>,
     psm: &'a SquareMatrixBorrower<'a>,
     max_scans: u32,
     n_permutations: u32,
@@ -511,7 +667,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     let mut permutation: Vec<usize> = (0..ni).collect();
     let mut permutations_counter = 0;
     while permutations_counter < n_permutations {
-        let mut computer = computer_factory(psm);
+        let mut computer = computer_factory(draws, psm);
         let mut partition = Partition::new(ni);
         permutation.shuffle(rng);
         // Initial allocation
@@ -589,7 +745,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     // Canonicalize the labels
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
-    let loss = computer_factory(psm).final_loss_from_kernel(global_minimum);
+    let loss = computer_factory(draws, psm).final_loss_from_kernel(global_minimum);
     (
         labels,
         loss,
@@ -600,6 +756,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
 }
 
 pub fn minimize_by_salso<'a, T: Rng>(
+    draws: Option<&'a [Partition]>,
     psm: &'a SquareMatrixBorrower,
     loss_function: LossFunction,
     max_size: usize,
@@ -623,10 +780,30 @@ pub fn minimize_by_salso<'a, T: Rng>(
     loop {
         let result = if !parallel {
             match loss_function {
-                LossFunction::VI => panic!("Not yet implemented."),
-                LossFunction::VIlb => minimize_once_by_salso(
-                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| VarOfInfoLBComputer::new(psm)),
+                LossFunction::VI => minimize_once_by_salso(
+                    Box::new(
+                        |draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                            VarOfInfoComputer::new(draws.unwrap(), psm)
+                        },
+                    ),
                     max_label,
+                    draws,
+                    psm,
+                    max_scans,
+                    batch_size,
+                    probability_of_exploration_probability_at_zero,
+                    probability_of_exploration_shape,
+                    probability_of_exploration_rate,
+                    rng,
+                ),
+                LossFunction::VIlb => minimize_once_by_salso(
+                    Box::new(
+                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                            VarOfInfoLBComputer::new(psm)
+                        },
+                    ),
+                    max_label,
+                    draws,
                     psm,
                     max_scans,
                     batch_size,
@@ -636,8 +813,13 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     rng,
                 ),
                 LossFunction::AdjRand => minimize_once_by_salso(
-                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| AdjRandComputer::new(psm)),
+                    Box::new(
+                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                            AdjRandComputer::new(psm)
+                        },
+                    ),
                     max_label,
+                    draws,
                     psm,
                     max_scans,
                     batch_size,
@@ -647,8 +829,13 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     rng,
                 ),
                 LossFunction::Binder => minimize_once_by_salso(
-                    Box::new(|psm: &'a SquareMatrixBorrower<'a>| BinderComputer::new(psm)),
+                    Box::new(
+                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                            BinderComputer::new(psm)
+                        },
+                    ),
                     max_label,
+                    draws,
                     psm,
                     max_scans,
                     batch_size,
@@ -668,12 +855,30 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                     s.spawn(move |_| {
                         let result = match loss_function {
-                            LossFunction::VI => panic!("Not yet implemented."),
-                            LossFunction::VIlb => minimize_once_by_salso(
-                                Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
-                                    VarOfInfoLBComputer::new(psm)
-                                }),
+                            LossFunction::VI => minimize_once_by_salso(
+                                Box::new(
+                                    |draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                                        VarOfInfoComputer::new(draws.unwrap(), psm)
+                                    },
+                                ),
                                 max_label,
+                                draws,
+                                psm,
+                                max_scans,
+                                n_permutations,
+                                probability_of_exploration_probability_at_zero,
+                                probability_of_exploration_shape,
+                                probability_of_exploration_rate,
+                                &mut child_rng,
+                            ),
+                            LossFunction::VIlb => minimize_once_by_salso(
+                                Box::new(
+                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                                        VarOfInfoLBComputer::new(psm)
+                                    },
+                                ),
+                                max_label,
+                                draws,
                                 psm,
                                 max_scans,
                                 n_permutations,
@@ -683,10 +888,13 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                 &mut child_rng,
                             ),
                             LossFunction::AdjRand => minimize_once_by_salso(
-                                Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
-                                    AdjRandComputer::new(psm)
-                                }),
+                                Box::new(
+                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                                        AdjRandComputer::new(psm)
+                                    },
+                                ),
                                 max_label,
+                                draws,
                                 psm,
                                 max_scans,
                                 n_permutations,
@@ -696,10 +904,13 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                 &mut child_rng,
                             ),
                             LossFunction::Binder => minimize_once_by_salso(
-                                Box::new(|psm: &'a SquareMatrixBorrower<'a>| {
-                                    BinderComputer::new(psm)
-                                }),
+                                Box::new(
+                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                                        BinderComputer::new(psm)
+                                    },
+                                ),
                                 max_label,
+                                draws,
                                 psm,
                                 max_scans,
                                 n_permutations,
@@ -785,6 +996,7 @@ mod tests_optimize {
         let mut psm = SquareMatrix::identity(5);
         let psm_view = &psm.view();
         minimize_by_salso(
+            None,
             psm_view,
             LossFunction::VIlb,
             2,
@@ -804,6 +1016,8 @@ mod tests_optimize {
 #[no_mangle]
 pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     n_items: i32,
+    n_draws: i32,
+    draws_ptr: *mut i32,
     psm_ptr: *mut f64,
     loss: i32,
     max_size: i32,
@@ -823,6 +1037,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let ni = usize::try_from(n_items).unwrap();
+    let nd = usize::try_from(n_draws).unwrap();
+    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, ni, true).get_all();
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let max_size = usize::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
@@ -843,6 +1059,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     }
     let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
         minimize_by_salso(
+            Some(&draws[..]),
             &psm,
             loss_function.unwrap(),
             max_size,
