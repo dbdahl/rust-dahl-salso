@@ -1,7 +1,9 @@
 extern crate num_cpus;
 extern crate rand;
 
-use crate::loss::{adjrand_single, binder_single, vilb_expected_loss_constant, vilb_single_kernel};
+use crate::loss::{
+    adjrand_single, binder_single_kernel, vilb_expected_loss_constant, vilb_single_kernel,
+};
 use crate::LossFunction;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
@@ -121,7 +123,8 @@ impl<'a> Computer for BinderComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        2.0 * self.expected_loss_unnormalized() + self.psm.sum_of_triangle()
+        let nif = self.psm.n_items() as f64;
+        (2.0 * self.expected_loss_unnormalized() + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
@@ -131,7 +134,8 @@ impl<'a> Computer for BinderComputer<'a> {
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        2.0 * kernel + self.psm.sum_of_triangle()
+        let nif = self.psm.n_items() as f64;
+        (2.0 * kernel + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
     }
 }
 
@@ -425,7 +429,8 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        (kernel + vilb_expected_loss_constant(self.psm)) / (self.psm.n_items() as f64)
+        let nif = self.psm.n_items() as f64;
+        (kernel + vilb_expected_loss_constant(self.psm)) / nif
     }
 }
 
@@ -1092,7 +1097,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let loss_function = LossFunction::from_code(loss);
     let f = match loss_function {
-        Some(LossFunction::Binder) => binder_single,
+        Some(LossFunction::Binder) => binder_single_kernel,
         Some(LossFunction::AdjRand) => adjrand_single,
         Some(LossFunction::VIlb) => vilb_single_kernel,
         Some(LossFunction::VI) => panic!("No implementation for VI."),

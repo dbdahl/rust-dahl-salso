@@ -5,7 +5,7 @@ use crate::Log2Cache;
 use crate::LossFunction;
 use std::slice;
 
-pub fn binder_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn binder_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum = 0.0;
@@ -22,6 +22,11 @@ pub fn binder_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     sum
 }
 
+pub fn binder_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+    let nif = psm.n_items() as f64;
+    binder_single_kernel(partition, psm) * 2.0 / (nif * nif)
+}
+
 pub fn binder_multiple(
     partitions: &PartitionsHolderBorrower,
     psm: &SquareMatrixBorrower,
@@ -35,6 +40,8 @@ pub fn binder_multiple(
             sum_p += unsafe { *psm.get_unchecked((i, j)) };
         }
     }
+    let nif = ni as f64;
+    let multiplier = 2.0 / (nif * nif);
     for k in 0..partitions.n_partitions() {
         let mut sum = 0.0;
         for j in 0..ni {
@@ -45,7 +52,7 @@ pub fn binder_multiple(
                 }
             }
         }
-        unsafe { *results.get_unchecked_mut(k) = sum + sum_p };
+        unsafe { *results.get_unchecked_mut(k) = multiplier * (sum + sum_p) };
     }
 }
 
