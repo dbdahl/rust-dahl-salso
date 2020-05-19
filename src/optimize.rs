@@ -460,14 +460,20 @@ struct VarOfInfoSubsetCalculations {
 
 pub struct VarOfInfoComputer<'a> {
     // cms: Vec<ConfusionMatrix<'a>>,
+    // cache: &'a Log2Cache,
     subsets: Vec<VarOfInfoSubsetCalculations>,
     psm: &'a SquareMatrixBorrower<'a>,
     draws: &'a [Partition],
 }
 
 impl<'a> VarOfInfoComputer<'a> {
-    pub fn new(draws: &'a [Partition], psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoComputer<'a> {
+    pub fn new(
+        draws: &'a [Partition],
+        psm: &'a SquareMatrixBorrower<'a>,
+        //cache: &'a Log2Cache,
+    ) -> VarOfInfoComputer<'a> {
         VarOfInfoComputer {
+            //   cache,
             subsets: Vec::new(),
             psm,
             draws,
@@ -755,7 +761,11 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 
 // General algorithm
 
-fn ensure_empty_subset<T: Computer>(partition: &mut Partition, computer: &mut T, max_label: usize) {
+fn ensure_empty_subset<'a>(
+    partition: &mut Partition,
+    computer: &mut Box<dyn Computer + 'a>,
+    max_label: usize,
+) {
     match partition.subsets().last() {
         None => computer.new_subset(partition),
         Some(last) => {
@@ -766,9 +776,9 @@ fn ensure_empty_subset<T: Computer>(partition: &mut Partition, computer: &mut T,
     }
 }
 
-fn micro_optimized_allocation<T: Rng, U: Computer>(
+fn micro_optimized_allocation<'a, T: Rng>(
     partition: &mut Partition,
-    computer: &mut U,
+    computer: &mut Box<dyn Computer + 'a>,
     i: usize,
     probability_of_exploration: f64,
     rng: &mut T,
@@ -811,9 +821,13 @@ fn micro_optimized_allocation<T: Rng, U: Computer>(
     subset_index
 }
 
-pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
+pub fn minimize_once_by_salso<'a, T: Rng>(
     computer_factory: Box<
-        dyn Fn(Option<&'a [Partition]>, Option<&'a SquareMatrixBorrower<'a>>) -> U,
+        dyn Fn(
+                Option<&'a [Partition]>,
+                Option<&'a SquareMatrixBorrower<'a>>,
+            ) -> Box<dyn Computer + 'a>
+            + 'a,
     >,
     n_items: usize,
     max_label: usize,
@@ -955,98 +969,51 @@ pub fn minimize_by_salso<'a, T: Rng>(
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
     loop {
         let result = if !parallel {
-            match loss_function {
-                LossFunction::Binder => minimize_once_by_salso(
-                    Box::new(
-                        |_draws: Option<&'a [Partition]>,
-                         psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                            BinderComputer::new(psm.unwrap())
-                        },
-                    ),
-                    n_items,
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
+            let computer_factory: Box<
+                dyn Fn(
+                    Option<&'a [Partition]>,
+                    Option<&'a SquareMatrixBorrower<'a>>,
+                ) -> Box<dyn Computer>,
+            > = match loss_function {
+                LossFunction::Binder => Box::new(
+                    |_draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                        Box::new(BinderComputer::new(psm.unwrap()))
+                    },
                 ),
-                LossFunction::OneMinusARI => minimize_once_by_salso(
-                    Box::new(
-                        |draws: Option<&'a [Partition]>,
-                         psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                            OneMinusARIComputer::new(draws.unwrap(), psm.unwrap())
-                        },
-                    ),
-                    n_items,
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
+                LossFunction::OneMinusARI => Box::new(
+                    |draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                        Box::new(OneMinusARIComputer::new(draws.unwrap(), psm.unwrap()))
+                    },
                 ),
-                LossFunction::OneMinusARIapprox => minimize_once_by_salso(
-                    Box::new(
-                        |_draws: Option<&'a [Partition]>,
-                         psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                            OneMinusARIapproxComputer::new(psm.unwrap())
-                        },
-                    ),
-                    n_items,
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
+                LossFunction::OneMinusARIapprox => Box::new(
+                    |_draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                        Box::new(OneMinusARIapproxComputer::new(psm.unwrap()))
+                    },
                 ),
-                LossFunction::VI => minimize_once_by_salso(
-                    Box::new(
-                        |draws: Option<&'a [Partition]>,
-                         _psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                            VarOfInfoComputer::new(draws.unwrap(), _psm.unwrap())
-                        },
-                    ),
-                    n_items,
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
+                LossFunction::VI => Box::new(
+                    |draws: Option<&[Partition]>, _psm: Option<&SquareMatrixBorrower>| {
+                        Box::new(VarOfInfoComputer::new(draws.unwrap(), _psm.unwrap()))
+                    },
                 ),
-                LossFunction::VIlb => minimize_once_by_salso(
-                    Box::new(
-                        |_draws: Option<&'a [Partition]>,
-                         psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                            VarOfInfoLBComputer::new(psm.unwrap())
-                        },
-                    ),
-                    n_items,
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
+                LossFunction::VIlb => Box::new(
+                    |_draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                        Box::new(VarOfInfoLBComputer::new(psm.unwrap()))
+                    },
                 ),
-            }
+            };
+            minimize_once_by_salso(
+                computer_factory,
+                n_items,
+                max_label,
+                draws,
+                psm,
+                max_scans,
+                batch_size,
+                probability_of_exploration_probability_at_zero,
+                probability_of_exploration_shape,
+                probability_of_exploration_rate,
+                rng,
+            )
         } else {
             let (tx, rx) = mpsc::channel();
             let n_cores = num_cpus::get() as u32;
@@ -1056,93 +1023,51 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     let tx = mpsc::Sender::clone(&tx);
                     let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                     s.spawn(move |_| {
-                        let result = match loss_function {
-                            LossFunction::Binder => minimize_once_by_salso(
-                                Box::new(
-                                    |_draws: Option<&'a [Partition]>, psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                                        BinderComputer::new(psm.unwrap())
-                                    },
-                                ),
-                                n_items,
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
+                        let computer_factory: Box<
+                            dyn Fn(
+                                Option<&'a [Partition]>,
+                                Option<&'a SquareMatrixBorrower>,
+                            ) -> Box<dyn Computer>,
+                        > = match loss_function {
+                            LossFunction::Binder => Box::new(
+                                |_draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                                    Box::new(BinderComputer::new(psm.unwrap()))
+                                },
                             ),
-                            LossFunction::OneMinusARI => minimize_once_by_salso(
-                                Box::new(
-                                    |draws: Option<&'a [Partition]>, psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                                        OneMinusARIComputer::new(draws.unwrap(), psm.unwrap())
-                                    },
-                                ),
-                                n_items,
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
+                            LossFunction::OneMinusARI => Box::new(
+                                |draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                                    Box::new(OneMinusARIComputer::new(draws.unwrap(), psm.unwrap()))
+                                },
                             ),
-                            LossFunction::OneMinusARIapprox => minimize_once_by_salso(
-                                Box::new(
-                                    |_draws: Option<&'a [Partition]>, psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                                        OneMinusARIapproxComputer::new(psm.unwrap())
-                                    },
-                                ),
-                                n_items,
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
+                            LossFunction::OneMinusARIapprox => Box::new(
+                                |_draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                                    Box::new(OneMinusARIapproxComputer::new(psm.unwrap()))
+                                },
                             ),
-                            LossFunction::VI => minimize_once_by_salso(
-                                Box::new(
-                                    |draws: Option<&'a [Partition]>, psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                                        VarOfInfoComputer::new(draws.unwrap(), psm.unwrap())
-                                    },
-                                ),
-                                n_items,
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
+                            LossFunction::VI => Box::new(
+                                |draws: Option<&[Partition]>, _psm: Option<&SquareMatrixBorrower>| {
+                                    Box::new(VarOfInfoComputer::new(draws.unwrap(), _psm.unwrap()))
+                                },
                             ),
-                            LossFunction::VIlb => minimize_once_by_salso(
-                                Box::new(
-                                    |_draws: Option<&'a [Partition]>, psm: Option<&'a SquareMatrixBorrower<'a>>| {
-                                        VarOfInfoLBComputer::new(psm.unwrap())
-                                    },
-                                ),
-                                n_items,
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
+                            LossFunction::VIlb => Box::new(
+                                |_draws: Option<&[Partition]>, psm: Option<&SquareMatrixBorrower>| {
+                                    Box::new(VarOfInfoLBComputer::new(psm.unwrap()))
+                                },
                             ),
                         };
+                        let result = minimize_once_by_salso(
+                            computer_factory,
+                            n_items,
+                            max_label,
+                            draws,
+                            psm,
+                            max_scans,
+                            n_permutations,
+                            probability_of_exploration_probability_at_zero,
+                            probability_of_exploration_shape,
+                            probability_of_exploration_rate,
+                            &mut child_rng,
+                        );
                         tx.send(result).unwrap();
                     });
                 }
