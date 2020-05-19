@@ -61,6 +61,10 @@ pub fn binder_multiple(
 // Expectation of one minus adjusted Rand index
 
 pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+    pub fn n_choose_2_times_2(x: u32) -> f64 {
+	let x = x as f64;
+        x * (x - 1)
+    }
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
         .map(|draw| ConfusionMatrix::new(draw, partition, cache))
@@ -71,15 +75,15 @@ pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cach
         let mut sum2 = 0.0;
         let mut sum12 = 0.0;
         for k1 in 0..cm.k1() {
-            sum1 += cache.n_choose_2_times_2(cm.n1(k1));
+            sum1 += n_choose_2_times_2(cm.n1(k1));
         }
         for k2 in 0..cm.k2() {
-            sum2 += cache.n_choose_2_times_2(cm.n2(k2));
+            sum2 += n_choose_2_times_2(cm.n2(k2));
             for k1 in 0..cm.k1() {
-                sum12 += cache.n_choose_2_times_2(cm.n12(k1, k2));
+                sum12 += n_choose_2_times_2(cm.n12(k1, k2));
             }
         }
-        let offset = sum1 * sum2 / cache.n_choose_2_times_2(cms[0].n());
+        let offset = sum1 * sum2 / n_choose_2_times_2(cms[0].n());
         sum += (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
     }
     1.0 - sum / (cms.len() as f64)
