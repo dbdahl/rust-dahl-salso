@@ -52,8 +52,8 @@ impl Log2Cache {
         p * log2p
     }
 
-    pub fn n_choose_2(&self, x: u32) -> f64 {
-        (x * (x - 1) / 2) as f64
+    pub fn n_choose_2_times_2(&self, x: u32) -> f64 {
+        (x * (x - 1)) as f64
     }
 }
 
