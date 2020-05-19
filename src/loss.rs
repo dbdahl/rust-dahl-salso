@@ -62,8 +62,8 @@ pub fn binder_multiple(
 
 pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
     pub fn n_choose_2_times_2(x: u32) -> f64 {
-	let x = x as f64;
-        x * (x - 1)
+        let x = x as f64;
+        x * (x - 1.0)
     }
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
