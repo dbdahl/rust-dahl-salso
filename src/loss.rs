@@ -63,7 +63,7 @@ pub fn binder_multiple(
 pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
+        .map(|draw| ConfusionMatrix::new(draw, partition, cache))
         .collect();
     let mut sum = 0.0;
     for cm in &cms {
@@ -162,7 +162,7 @@ pub fn omariapprox_multiple(
 pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
+        .map(|draw| ConfusionMatrix::new(draw, partition, cache))
         .collect();
     let mut sum = 0.0;
     for cm in cms {
