@@ -5,7 +5,7 @@ use crate::loss::{
     binder_single_kernel, omariapprox_single, vilb_expected_loss_constant, vilb_single_kernel,
 };
 use crate::LossFunction;
-// use crate::{ConfusionMatrix, Log2Cache};
+use crate::{ConfusionMatrix, Log2Cache};
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
@@ -460,7 +460,7 @@ struct VarOfInfoSubsetCalculations {
 
 pub struct VarOfInfoComputer<'a> {
     // cms: Vec<ConfusionMatrix<'a>>,
-    // cache: &'a Log2Cache,
+    cache: &'a Log2Cache,
     subsets: Vec<VarOfInfoSubsetCalculations>,
     psm: &'a SquareMatrixBorrower<'a>,
     draws: &'a [Partition],
@@ -470,10 +470,10 @@ impl<'a> VarOfInfoComputer<'a> {
     pub fn new(
         draws: &'a [Partition],
         psm: &'a SquareMatrixBorrower<'a>,
-        //cache: &'a Log2Cache,
+        cache: &'a Log2Cache,
     ) -> VarOfInfoComputer<'a> {
         VarOfInfoComputer {
-            //   cache,
+            cache,
             subsets: Vec::new(),
             psm,
             draws,
@@ -953,26 +953,38 @@ pub fn minimize_by_salso<'a, T: Rng>(
     } else {
         max_size - 1
     };
-    //    let cache_option = match loss_function {
-    //        LossFunction::VI => Some(Log2Cache::new(draws.unwrap()[0].n_items())),
-    //        _ => None,
-    //    };
+    let cache = Log2Cache::new(if let LossFunction::VI = loss_function {
+        n_items
+    } else {
+        0
+    });
     let mut global_best = (Vec::new(), f64::INFINITY, 0, 0.0, 0);
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
     loop {
         let result = if !parallel {
             let computer_factory: Box<dyn Fn() -> Box<dyn Computer>> = match loss_function {
-                LossFunction::Binder => Box::new(|| Box::new(BinderComputer::new(psm.unwrap()))),
+                LossFunction::Binder => {
+                    //
+                    Box::new(|| Box::new(BinderComputer::new(psm.unwrap())))
+                }
                 LossFunction::OneMinusARI => {
+                    //
                     Box::new(|| Box::new(OneMinusARIComputer::new(draws.unwrap(), psm.unwrap())))
                 }
                 LossFunction::OneMinusARIapprox => {
+                    //
                     Box::new(|| Box::new(OneMinusARIapproxComputer::new(psm.unwrap())))
                 }
                 LossFunction::VI => {
-                    Box::new(|| Box::new(VarOfInfoComputer::new(draws.unwrap(), psm.unwrap())))
+                    //
+                    Box::new(|| {
+                        Box::new(VarOfInfoComputer::new(draws.unwrap(), psm.unwrap(), &cache))
+                    })
                 }
-                LossFunction::VIlb => Box::new(|| Box::new(VarOfInfoLBComputer::new(psm.unwrap()))),
+                LossFunction::VIlb => {
+                    //
+                    Box::new(|| Box::new(VarOfInfoLBComputer::new(psm.unwrap())))
+                }
             };
             minimize_once_by_salso(
                 computer_factory,
@@ -989,6 +1001,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
             let (tx, rx) = mpsc::channel();
             let n_cores = num_cpus::get() as u32;
             let n_permutations = (batch_size + n_cores - 1) / n_cores;
+            let cache_ref = &cache;
             crossbeam::scope(|s| {
                 for _ in 0..n_cores {
                     let tx = mpsc::Sender::clone(&tx);
@@ -1006,7 +1019,11 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                     Box::new(OneMinusARIapproxComputer::new(psm.unwrap()))
                                 }),
                                 LossFunction::VI => Box::new(|| {
-                                    Box::new(VarOfInfoComputer::new(draws.unwrap(), psm.unwrap()))
+                                    Box::new(VarOfInfoComputer::new(
+                                        draws.unwrap(),
+                                        psm.unwrap(),
+                                        cache_ref,
+                                    ))
                                 }),
                                 LossFunction::VIlb => {
                                     Box::new(|| Box::new(VarOfInfoLBComputer::new(psm.unwrap())))
