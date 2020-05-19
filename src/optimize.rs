@@ -4,8 +4,7 @@ extern crate rand;
 use crate::loss::{
     binder_single_kernel, omariapprox_single, vilb_expected_loss_constant, vilb_single_kernel,
 };
-use crate::LossFunction;
-use crate::{ConfusionMatrix, Log2Cache};
+use crate::{ConfusionMatrix, Log2Cache, LossFunction, PartitionDistributionInformation};
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
@@ -934,8 +933,8 @@ pub fn minimize_once_by_salso<'a, T: Rng>(
 
 pub fn minimize_by_salso<'a, T: Rng>(
     n_items: usize,
-    draws: Option<&'a [Partition]>,
-    psm: Option<&'a SquareMatrixBorrower>,
+    pdi: PartitionDistributionInformation,
+    psm: Option<&'a SquareMatrixBorrower<'a>>,
     loss_function: LossFunction,
     max_size: usize,
     max_scans: u32,
@@ -969,7 +968,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::OneMinusARI => {
                     //
-                    Box::new(|| Box::new(OneMinusARIComputer::new(draws.unwrap(), psm.unwrap())))
+                    Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws(), psm.unwrap())))
                 }
                 LossFunction::OneMinusARIapprox => {
                     //
@@ -977,9 +976,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::VI => {
                     //
-                    Box::new(|| {
-                        Box::new(VarOfInfoComputer::new(draws.unwrap(), psm.unwrap(), &cache))
-                    })
+                    Box::new(|| Box::new(VarOfInfoComputer::new(pdi.draws(), psm.unwrap(), &cache)))
                 }
                 LossFunction::VIlb => {
                     //
@@ -1013,14 +1010,14 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                     Box::new(|| Box::new(BinderComputer::new(psm.unwrap())))
                                 }
                                 LossFunction::OneMinusARI => Box::new(|| {
-                                    Box::new(OneMinusARIComputer::new(draws.unwrap(), psm.unwrap()))
+                                    Box::new(OneMinusARIComputer::new(pdi.draws(), psm.unwrap()))
                                 }),
                                 LossFunction::OneMinusARIapprox => Box::new(|| {
                                     Box::new(OneMinusARIapproxComputer::new(psm.unwrap()))
                                 }),
                                 LossFunction::VI => Box::new(|| {
                                     Box::new(VarOfInfoComputer::new(
-                                        draws.unwrap(),
+                                        pdi.draws(),
                                         psm.unwrap(),
                                         cache_ref,
                                     ))
@@ -1118,7 +1115,7 @@ mod tests_optimize {
         let psm_view = &psm.view();
         minimize_by_salso(
             n_items,
-            None,
+            PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
             Some(psm_view),
             LossFunction::VIlb,
             2,
@@ -1182,7 +1179,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
         minimize_by_salso(
             ni,
-            Some(&draws[..]),
+            PartitionDistributionInformation::Draws(&draws[..]),
             Some(&psm),
             loss_function.unwrap(),
             max_size,

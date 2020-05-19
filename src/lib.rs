@@ -10,6 +10,27 @@ pub mod psm;
 
 use dahl_partition::*;
 
+#[derive(Copy, Clone)]
+pub enum PartitionDistributionInformation<'a> {
+    Draws(&'a [Partition]),
+    PairwiseSimilarityMatrix(&'a SquareMatrixBorrower<'a>),
+}
+
+impl<'a> PartitionDistributionInformation<'a> {
+    pub fn draws(self) -> &'a [Partition] {
+        match self {
+            PartitionDistributionInformation::Draws(d) => d,
+            _ => panic!("Not available."),
+        }
+    }
+    pub fn psm(self) -> &'a SquareMatrixBorrower<'a> {
+        match self {
+            PartitionDistributionInformation::PairwiseSimilarityMatrix(p) => p,
+            _ => panic!("Not available."),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub enum LossFunction {
     Binder,
