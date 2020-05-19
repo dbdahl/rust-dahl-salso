@@ -5,6 +5,8 @@ use crate::Log2Cache;
 use crate::LossFunction;
 use std::slice;
 
+// Expectation of Binder loss
+
 pub fn binder_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
@@ -55,6 +57,51 @@ pub fn binder_multiple(
         unsafe { *results.get_unchecked_mut(k) = multiplier * (sum + sum_p) };
     }
 }
+
+// Expectation of one minus adjusted Rand index
+
+pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
+        .collect();
+    let mut sum = 0.0;
+    for cm in &cms {
+        let mut sum1 = 0.0;
+        let mut sum2 = 0.0;
+        let mut sum12 = 0.0;
+        for k1 in 0..cm.k1() {
+            sum1 += cache.n_choose_2_times_2(cm.n1(k1));
+        }
+        for k2 in 0..cm.k2() {
+            sum2 += cache.n_choose_2_times_2(cm.n2(k2));
+            for k1 in 0..cm.k1() {
+                sum12 += cache.n_choose_2_times_2(cm.n12(k1, k2));
+            }
+        }
+        let offset = sum1 * sum2 / cache.n_choose_2_times_2(cms[0].n());
+        sum += (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
+    }
+    1.0 - sum / (cms.len() as f64)
+}
+
+pub fn omari_multiple(
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let ni = partitions.n_items();
+    assert_eq!(ni, draws.n_items());
+    let partitions2 = partitions.get_all();
+    let draws2 = draws.get_all();
+    let cache = Log2Cache::new(ni);
+    for k in 0..partitions2.len() {
+        let vi = omari_single(&partitions2[k], &draws2[..], &cache);
+        unsafe { *results.get_unchecked_mut(k) = vi };
+    }
+}
+
+// Approximation of expectation of one minus adjusted Rand index
 
 pub fn omariapprox_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
@@ -109,6 +156,46 @@ pub fn omariapprox_multiple(
         unsafe { *results.get_unchecked_mut(k) = omariapprox };
     }
 }
+
+// Expectation of the variation of information
+
+pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
+        .collect();
+    let mut sum = 0.0;
+    for cm in cms {
+        for k1 in 0..cm.k1() {
+            sum += cm.plogp1(k1);
+        }
+        for k2 in 0..cm.k2() {
+            sum += cm.plogp2(k2);
+            for k1 in 0..cm.k1() {
+                sum -= 2.0 * cm.plogp12(k1, k2);
+            }
+        }
+    }
+    sum / (draws.len() as f64)
+}
+
+pub fn vi_multiple(
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let ni = partitions.n_items();
+    assert_eq!(ni, draws.n_items());
+    let partitions2 = partitions.get_all();
+    let draws2 = draws.get_all();
+    let cache = Log2Cache::new(ni);
+    for k in 0..partitions2.len() {
+        let vi = vi_single(&partitions2[k], &draws2[..], &cache);
+        unsafe { *results.get_unchecked_mut(k) = vi };
+    }
+}
+
+// Lower bound of the expectation of the variation of information
 
 pub fn vilb_expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
     let ni = psm.n_items();
@@ -200,83 +287,6 @@ pub fn vilb_multiple(
     }
 }
 
-pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
-        .collect();
-    let mut sum = 0.0;
-    for cm in cms {
-        for k1 in 0..cm.k1() {
-            sum += cm.plogp1(k1);
-        }
-        for k2 in 0..cm.k2() {
-            sum += cm.plogp2(k2);
-            for k1 in 0..cm.k1() {
-                sum -= 2.0 * cm.plogp12(k1, k2);
-            }
-        }
-    }
-    sum / (draws.len() as f64)
-}
-
-pub fn vi_multiple(
-    partitions: &PartitionsHolderBorrower,
-    draws: &PartitionsHolderBorrower,
-    results: &mut [f64],
-) {
-    let ni = partitions.n_items();
-    assert_eq!(ni, draws.n_items());
-    let partitions2 = partitions.get_all();
-    let draws2 = draws.get_all();
-    let cache = Log2Cache::new(ni);
-    for k in 0..partitions2.len() {
-        let vi = vi_single(&partitions2[k], &draws2[..], &cache);
-        unsafe { *results.get_unchecked_mut(k) = vi };
-    }
-}
-
-pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::new(partition, draw, cache))
-        .collect();
-    let mut sum = 0.0;
-    for cm in &cms {
-        let mut sum1 = 0.0;
-        let mut sum2 = 0.0;
-        let mut sum12 = 0.0;
-        for k1 in 0..cm.k1() {
-            sum1 += cache.n_choose_2_times_2(cm.n1(k1));
-        }
-        for k2 in 0..cm.k2() {
-            sum2 += cache.n_choose_2_times_2(cm.n2(k2));
-            for k1 in 0..cm.k1() {
-                sum12 += cache.n_choose_2_times_2(cm.n12(k1, k2));
-            }
-        }
-        let offset = sum1 * sum2 / cache.n_choose_2_times_2(cms[0].n());
-        sum += (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
-    }
-    1.0 - sum / (cms.len() as f64)
-}
-
-pub fn omari_multiple(
-    partitions: &PartitionsHolderBorrower,
-    draws: &PartitionsHolderBorrower,
-    results: &mut [f64],
-) {
-    let ni = partitions.n_items();
-    assert_eq!(ni, draws.n_items());
-    let partitions2 = partitions.get_all();
-    let draws2 = draws.get_all();
-    let cache = Log2Cache::new(ni);
-    for k in 0..partitions2.len() {
-        let vi = omari_single(&partitions2[k], &draws2[..], &cache);
-        unsafe { *results.get_unchecked_mut(k) = vi };
-    }
-}
-
 #[no_mangle]
 pub unsafe extern "C" fn dahl_salso__expected_loss(
     n_partitions: i32,
@@ -329,6 +339,7 @@ mod tests_loss {
                 results[k]
             );
         }
+        omari_multiple(samples_view, samples_view, &mut results[..]);
         omariapprox_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
             assert_relative_eq!(
@@ -336,6 +347,7 @@ mod tests_loss {
                 results[k]
             );
         }
+        vi_multiple(samples_view, samples_view, &mut results[..]);
         vilb_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
             assert_ulps_eq!(
@@ -354,7 +366,5 @@ mod tests_loss {
                 (results[k] - results[k - 1]) as f32,
             );
         }
-        vi_multiple(samples_view, samples_view, &mut results[..]);
-        omari_multiple(samples_view, samples_view, &mut results[..]);
     }
 }

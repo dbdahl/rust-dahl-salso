@@ -139,6 +139,162 @@ impl<'a> Computer for BinderComputer<'a> {
     }
 }
 
+// Expectation of the one minus adjusted Rand index loss
+
+#[derive(Debug)]
+struct OneMinusARICacheUnit {
+    item: usize,
+    committed_sum: f64,
+    committed_contribution: f64,
+    speculative_sum: f64,
+    speculative_contribution: f64,
+}
+
+#[derive(Debug)]
+struct OneMinusARISubsetCalculations {
+    cached_units: Vec<OneMinusARICacheUnit>,
+    committed_loss: f64,
+    speculative_loss: f64,
+}
+
+pub struct OneMinusARIComputer<'a> {
+    subsets: Vec<OneMinusARISubsetCalculations>,
+    psm: &'a SquareMatrixBorrower<'a>,
+    draws: &'a [Partition],
+}
+
+impl<'a> OneMinusARIComputer<'a> {
+    pub fn new(
+        draws: &'a [Partition],
+        psm: &'a SquareMatrixBorrower<'a>,
+    ) -> OneMinusARIComputer<'a> {
+        OneMinusARIComputer {
+            subsets: Vec::new(),
+            psm,
+            draws,
+        }
+    }
+}
+
+impl<'a> Computer for OneMinusARIComputer<'a> {
+    fn new_subset(&mut self, partition: &mut Partition) {
+        partition.new_subset();
+        self.subsets.push(OneMinusARISubsetCalculations {
+            cached_units: Vec::new(),
+            committed_loss: 0.0,
+            speculative_loss: 0.0,
+        })
+    }
+
+    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
+        let subset_of_partition = &partition.subsets()[subset_index];
+        if subset_of_partition.n_items() == 0 {
+            self.subsets[subset_index]
+                .cached_units
+                .push(OneMinusARICacheUnit {
+                    item: i,
+                    committed_sum: 0.0,
+                    committed_contribution: 0.0,
+                    speculative_sum: 1.0,
+                    speculative_contribution: 0.0,
+                });
+            return 0.0;
+        }
+        for cu in self.subsets[subset_index].cached_units.iter_mut() {
+            cu.speculative_sum =
+                cu.committed_sum + unsafe { *self.psm.get_unchecked((cu.item, i)) };
+            cu.speculative_contribution = cu.speculative_sum.log2();
+        }
+        let sum = subset_of_partition
+            .items()
+            .iter()
+            .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) })
+            + 1.0; // Because self.psm[(i, i)] == 1;
+        self.subsets[subset_index]
+            .cached_units
+            .push(OneMinusARICacheUnit {
+                item: i,
+                committed_sum: 0.0,
+                committed_contribution: 0.0,
+                speculative_sum: sum,
+                speculative_contribution: sum.log2(),
+            });
+        let nif = subset_of_partition.n_items() as f64;
+        let s1 = (nif + 1.0) * (nif + 1.0).log2();
+        let s2 = self.subsets[subset_index]
+            .cached_units
+            .iter()
+            .fold(0.0, |s, cu| s + cu.speculative_contribution);
+        self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
+        self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
+    }
+
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+        for (index, subset) in self.subsets.iter_mut().enumerate() {
+            if index == subset_index {
+                for cu in subset.cached_units.iter_mut() {
+                    cu.committed_sum = cu.speculative_sum;
+                    cu.committed_contribution = cu.speculative_contribution;
+                }
+            } else {
+                subset.cached_units.pop();
+            }
+        }
+        self.subsets[subset_index].committed_loss = self.subsets[subset_index].speculative_loss;
+        partition.add_with_index(i, subset_index);
+    }
+
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+        let subset_index = partition.label_of(i).unwrap();
+        for cu in self.subsets[subset_index].cached_units.iter_mut() {
+            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
+            cu.committed_contribution = cu.committed_sum.log2();
+        }
+        let pos = self.subsets[subset_index]
+            .cached_units
+            .iter()
+            .enumerate()
+            .find(|cu| cu.1.item == i)
+            .unwrap()
+            .0;
+        self.subsets[subset_index].cached_units.swap_remove(pos);
+        self.subsets[subset_index].committed_loss =
+            match partition.subsets()[subset_index].n_items() {
+                0 => 0.0,
+                ni => {
+                    let nif = ni as f64;
+                    nif * nif.log2()
+                        - 2.0
+                            * self.subsets[subset_index]
+                                .cached_units
+                                .iter()
+                                .fold(0.0, |s, cu| s + cu.committed_contribution)
+                }
+            };
+        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            self.subsets.swap_remove(killed_subset_index);
+            assert_eq!(moved_subset_index, self.subsets.len());
+        });
+        subset_index
+    }
+
+    fn expected_loss(&self) -> f64 {
+        let nif = self.psm.n_items() as f64;
+        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
+    }
+
+    fn expected_loss_unnormalized(&self) -> f64 {
+        self.subsets
+            .iter()
+            .fold(0.0, |s, subset| s + subset.committed_loss)
+    }
+
+    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+        let nif = self.psm.n_items() as f64;
+        (kernel + vilb_expected_loss_constant(self.psm)) / nif
+    }
+}
+
 // First-order approximation of expectation of one minus the adjusted Rand index
 
 #[derive(Debug)]
@@ -280,157 +436,6 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
         kernel
-    }
-}
-
-// Lower bound of the expectation of variation of information loss
-
-#[derive(Debug)]
-struct VarOfInfoLBCacheUnit {
-    item: usize,
-    committed_sum: f64,
-    committed_contribution: f64,
-    speculative_sum: f64,
-    speculative_contribution: f64,
-}
-
-#[derive(Debug)]
-struct VarOfInfoLBSubsetCalculations {
-    cached_units: Vec<VarOfInfoLBCacheUnit>,
-    committed_loss: f64,
-    speculative_loss: f64,
-}
-
-pub struct VarOfInfoLBComputer<'a> {
-    subsets: Vec<VarOfInfoLBSubsetCalculations>,
-    psm: &'a SquareMatrixBorrower<'a>,
-}
-
-impl<'a> VarOfInfoLBComputer<'a> {
-    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoLBComputer<'a> {
-        VarOfInfoLBComputer {
-            subsets: Vec::new(),
-            psm,
-        }
-    }
-}
-
-impl<'a> Computer for VarOfInfoLBComputer<'a> {
-    fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        self.subsets.push(VarOfInfoLBSubsetCalculations {
-            cached_units: Vec::new(),
-            committed_loss: 0.0,
-            speculative_loss: 0.0,
-        })
-    }
-
-    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        let subset_of_partition = &partition.subsets()[subset_index];
-        if subset_of_partition.n_items() == 0 {
-            self.subsets[subset_index]
-                .cached_units
-                .push(VarOfInfoLBCacheUnit {
-                    item: i,
-                    committed_sum: 0.0,
-                    committed_contribution: 0.0,
-                    speculative_sum: 1.0,
-                    speculative_contribution: 0.0,
-                });
-            return 0.0;
-        }
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.speculative_sum =
-                cu.committed_sum + unsafe { *self.psm.get_unchecked((cu.item, i)) };
-            cu.speculative_contribution = cu.speculative_sum.log2();
-        }
-        let sum = subset_of_partition
-            .items()
-            .iter()
-            .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) })
-            + 1.0; // Because self.psm[(i, i)] == 1;
-        self.subsets[subset_index]
-            .cached_units
-            .push(VarOfInfoLBCacheUnit {
-                item: i,
-                committed_sum: 0.0,
-                committed_contribution: 0.0,
-                speculative_sum: sum,
-                speculative_contribution: sum.log2(),
-            });
-        let nif = subset_of_partition.n_items() as f64;
-        let s1 = (nif + 1.0) * (nif + 1.0).log2();
-        let s2 = self.subsets[subset_index]
-            .cached_units
-            .iter()
-            .fold(0.0, |s, cu| s + cu.speculative_contribution);
-        self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
-        self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
-    }
-
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        for (index, subset) in self.subsets.iter_mut().enumerate() {
-            if index == subset_index {
-                for cu in subset.cached_units.iter_mut() {
-                    cu.committed_sum = cu.speculative_sum;
-                    cu.committed_contribution = cu.speculative_contribution;
-                }
-            } else {
-                subset.cached_units.pop();
-            }
-        }
-        self.subsets[subset_index].committed_loss = self.subsets[subset_index].speculative_loss;
-        partition.add_with_index(i, subset_index);
-    }
-
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
-        let subset_index = partition.label_of(i).unwrap();
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
-            cu.committed_contribution = cu.committed_sum.log2();
-        }
-        let pos = self.subsets[subset_index]
-            .cached_units
-            .iter()
-            .enumerate()
-            .find(|cu| cu.1.item == i)
-            .unwrap()
-            .0;
-        self.subsets[subset_index].cached_units.swap_remove(pos);
-        self.subsets[subset_index].committed_loss =
-            match partition.subsets()[subset_index].n_items() {
-                0 => 0.0,
-                ni => {
-                    let nif = ni as f64;
-                    nif * nif.log2()
-                        - 2.0
-                            * self.subsets[subset_index]
-                                .cached_units
-                                .iter()
-                                .fold(0.0, |s, cu| s + cu.committed_contribution)
-                }
-            };
-        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            self.subsets.swap_remove(killed_subset_index);
-            assert_eq!(moved_subset_index, self.subsets.len());
-        });
-        subset_index
-    }
-
-    fn expected_loss(&self) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
-    }
-
-    fn expected_loss_unnormalized(&self) -> f64 {
-        self.subsets
-            .iter()
-            .fold(0.0, |s, subset| s + subset.committed_loss)
-    }
-
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (kernel + vilb_expected_loss_constant(self.psm)) / nif
     }
 }
 
@@ -586,10 +591,10 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     }
 }
 
-// Expectation of the one minus adjusted Rand index loss
+// Lower bound of the expectation of variation of information loss
 
 #[derive(Debug)]
-struct OneMinusARICacheUnit {
+struct VarOfInfoLBCacheUnit {
     item: usize,
     committed_sum: f64,
     committed_contribution: f64,
@@ -598,35 +603,30 @@ struct OneMinusARICacheUnit {
 }
 
 #[derive(Debug)]
-struct OneMinusARISubsetCalculations {
-    cached_units: Vec<OneMinusARICacheUnit>,
+struct VarOfInfoLBSubsetCalculations {
+    cached_units: Vec<VarOfInfoLBCacheUnit>,
     committed_loss: f64,
     speculative_loss: f64,
 }
 
-pub struct OneMinusARIComputer<'a> {
-    subsets: Vec<OneMinusARISubsetCalculations>,
+pub struct VarOfInfoLBComputer<'a> {
+    subsets: Vec<VarOfInfoLBSubsetCalculations>,
     psm: &'a SquareMatrixBorrower<'a>,
-    draws: &'a [Partition],
 }
 
-impl<'a> OneMinusARIComputer<'a> {
-    pub fn new(
-        draws: &'a [Partition],
-        psm: &'a SquareMatrixBorrower<'a>,
-    ) -> OneMinusARIComputer<'a> {
-        OneMinusARIComputer {
+impl<'a> VarOfInfoLBComputer<'a> {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoLBComputer<'a> {
+        VarOfInfoLBComputer {
             subsets: Vec::new(),
             psm,
-            draws,
         }
     }
 }
 
-impl<'a> Computer for OneMinusARIComputer<'a> {
+impl<'a> Computer for VarOfInfoLBComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
-        self.subsets.push(OneMinusARISubsetCalculations {
+        self.subsets.push(VarOfInfoLBSubsetCalculations {
             cached_units: Vec::new(),
             committed_loss: 0.0,
             speculative_loss: 0.0,
@@ -638,7 +638,7 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
         if subset_of_partition.n_items() == 0 {
             self.subsets[subset_index]
                 .cached_units
-                .push(OneMinusARICacheUnit {
+                .push(VarOfInfoLBCacheUnit {
                     item: i,
                     committed_sum: 0.0,
                     committed_contribution: 0.0,
@@ -659,7 +659,7 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
             + 1.0; // Because self.psm[(i, i)] == 1;
         self.subsets[subset_index]
             .cached_units
-            .push(OneMinusARICacheUnit {
+            .push(VarOfInfoLBCacheUnit {
                 item: i,
                 committed_sum: 0.0,
                 committed_contribution: 0.0,
@@ -737,7 +737,8 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        (kernel + vilb_expected_loss_constant(self.psm)) / (self.psm.n_items() as f64)
+        let nif = self.psm.n_items() as f64;
+        (kernel + vilb_expected_loss_constant(self.psm)) / nif
     }
 }
 
@@ -937,10 +938,42 @@ pub fn minimize_by_salso<'a, T: Rng>(
     loop {
         let result = if !parallel {
             match loss_function {
+                LossFunction::Binder => minimize_once_by_salso(
+                    Box::new(
+                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                            BinderComputer::new(psm)
+                        },
+                    ),
+                    max_label,
+                    draws,
+                    psm,
+                    max_scans,
+                    batch_size,
+                    probability_of_exploration_probability_at_zero,
+                    probability_of_exploration_shape,
+                    probability_of_exploration_rate,
+                    rng,
+                ),
                 LossFunction::OneMinusARI => minimize_once_by_salso(
                     Box::new(
                         |draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
                             OneMinusARIComputer::new(draws.unwrap(), psm)
+                        },
+                    ),
+                    max_label,
+                    draws,
+                    psm,
+                    max_scans,
+                    batch_size,
+                    probability_of_exploration_probability_at_zero,
+                    probability_of_exploration_shape,
+                    probability_of_exploration_rate,
+                    rng,
+                ),
+                LossFunction::OneMinusARIapprox => minimize_once_by_salso(
+                    Box::new(
+                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                            OneMinusARIapproxComputer::new(psm)
                         },
                     ),
                     max_label,
@@ -985,38 +1018,6 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     probability_of_exploration_rate,
                     rng,
                 ),
-                LossFunction::OneMinusARIapprox => minimize_once_by_salso(
-                    Box::new(
-                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
-                            OneMinusARIapproxComputer::new(psm)
-                        },
-                    ),
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
-                ),
-                LossFunction::Binder => minimize_once_by_salso(
-                    Box::new(
-                        |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
-                            BinderComputer::new(psm)
-                        },
-                    ),
-                    max_label,
-                    draws,
-                    psm,
-                    max_scans,
-                    batch_size,
-                    probability_of_exploration_probability_at_zero,
-                    probability_of_exploration_shape,
-                    probability_of_exploration_rate,
-                    rng,
-                ),
             }
         } else {
             let (tx, rx) = mpsc::channel();
@@ -1028,10 +1029,42 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                     s.spawn(move |_| {
                         let result = match loss_function {
+                            LossFunction::Binder => minimize_once_by_salso(
+                                Box::new(
+                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                                        BinderComputer::new(psm)
+                                    },
+                                ),
+                                max_label,
+                                draws,
+                                psm,
+                                max_scans,
+                                n_permutations,
+                                probability_of_exploration_probability_at_zero,
+                                probability_of_exploration_shape,
+                                probability_of_exploration_rate,
+                                &mut child_rng,
+                            ),
                             LossFunction::OneMinusARI => minimize_once_by_salso(
                                 Box::new(
                                     |draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
                                         OneMinusARIComputer::new(draws.unwrap(), psm)
+                                    },
+                                ),
+                                max_label,
+                                draws,
+                                psm,
+                                max_scans,
+                                n_permutations,
+                                probability_of_exploration_probability_at_zero,
+                                probability_of_exploration_shape,
+                                probability_of_exploration_rate,
+                                &mut child_rng,
+                            ),
+                            LossFunction::OneMinusARIapprox => minimize_once_by_salso(
+                                Box::new(
+                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
+                                        OneMinusARIapproxComputer::new(psm)
                                     },
                                 ),
                                 max_label,
@@ -1064,38 +1097,6 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                 Box::new(
                                     |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
                                         VarOfInfoLBComputer::new(psm)
-                                    },
-                                ),
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
-                            ),
-                            LossFunction::OneMinusARIapprox => minimize_once_by_salso(
-                                Box::new(
-                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
-                                        OneMinusARIapproxComputer::new(psm)
-                                    },
-                                ),
-                                max_label,
-                                draws,
-                                psm,
-                                max_scans,
-                                n_permutations,
-                                probability_of_exploration_probability_at_zero,
-                                probability_of_exploration_shape,
-                                probability_of_exploration_rate,
-                                &mut child_rng,
-                            ),
-                            LossFunction::Binder => minimize_once_by_salso(
-                                Box::new(
-                                    |_draws: Option<&'a [Partition]>, psm: &'a SquareMatrixBorrower<'a>| {
-                                        BinderComputer::new(psm)
                                     },
                                 ),
                                 max_label,
