@@ -242,18 +242,23 @@ pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cach
         .map(|draw| ConfusionMatrix::new(partition, draw, cache))
         .collect();
     let mut sum = 0.0;
-    for cm in cms {
+    for cm in &cms {
+        let mut sum1 = 0.0;
+        let mut sum2 = 0.0;
+        let mut sum12 = 0.0;
         for k1 in 0..cm.k1() {
-            sum += cm.plogp1(k1);
+            sum1 += cache.n_choose_2(cm.n1(k1));
         }
         for k2 in 0..cm.k2() {
-            sum += cm.plogp2(k2);
+            sum2 += cache.n_choose_2(cm.n2(k2));
             for k1 in 0..cm.k1() {
-                sum -= 2.0 * cm.plogp12(k1, k2);
+                sum12 += cache.n_choose_2(cm.n12(k1, k2));
             }
         }
+        let offset = sum1 * sum2 / cache.n_choose_2(cms[0].n());
+        sum += 1.0 - (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
     }
-    sum / (draws.len() as f64)
+    sum / (cms.len() as f64)
 }
 
 pub fn omari_multiple(

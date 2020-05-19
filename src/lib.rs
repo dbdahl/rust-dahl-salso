@@ -51,6 +51,10 @@ impl Log2Cache {
         let log2p = self.cache[x as usize] - self.cache[n as usize];
         p * log2p
     }
+
+    pub fn n_choose_2(&self, x: u32) -> f64 {
+        (x * (x - 1) / 2) as f64
+    }
 }
 
 pub struct ConfusionMatrix<'a> {
