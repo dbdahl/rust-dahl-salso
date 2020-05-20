@@ -54,29 +54,30 @@ impl LossFunction {
 }
 
 pub struct Log2Cache {
-    log2: Vec<f64>,
+    log2n: Vec<f64>,
     nlog2n: Vec<f64>,
     nlog2n_difference: Vec<f64>,
 }
 
 impl Log2Cache {
     pub fn new(n: usize) -> Self {
-        let mut log2 = Vec::with_capacity(n + 1);
+        let mut log2n = Vec::with_capacity(n + 1);
         let mut nlog2n = Vec::with_capacity(n + 1);
         let mut nlog2n_difference = Vec::with_capacity(n + 1);
-        log2.push(0.0);
+        log2n.push(0.0);
         nlog2n.push(0.0);
         nlog2n_difference.push(0.0);
         for i in 1..=n {
             let i = i as f64;
-            let ilog2 = i.log2();
-            log2.push(ilog2);
-            nlog2n.push(i * ilog2);
+            let ilog2i = i.log2();
+            log2n.push(ilog2i);
+            let ilog2i = i * ilog2i;
+            nlog2n.push(ilog2i);
             let i_plus_one = i + 1.0;
-            nlog2n_difference.push(i_plus_one * i_plus_one.log2() - i * ilog2);
+            nlog2n_difference.push(i_plus_one * i_plus_one.log2() - ilog2i);
         }
         Self {
-            log2,
+            log2n,
             nlog2n,
             nlog2n_difference,
         }
@@ -84,7 +85,7 @@ impl Log2Cache {
 
     pub fn plog2p(&self, x: u32, n: u32) -> f64 {
         let p = (x as f64) / (n as f64);
-        let log2p = self.log2[x as usize] - self.log2[n as usize];
+        let log2p = self.log2n[x as usize] - self.log2n[n as usize];
         p * log2p
     }
 
