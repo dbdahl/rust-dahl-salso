@@ -54,23 +54,37 @@ impl LossFunction {
 }
 
 pub struct Log2Cache {
-    cache: Vec<f64>,
+    log2: Vec<f64>,
+    nlog2n_difference: Vec<f64>,
 }
 
 impl Log2Cache {
     pub fn new(n: usize) -> Self {
-        let mut cache = Vec::with_capacity(n + 1);
-        cache.push(0.0);
+        let mut log2 = Vec::with_capacity(n + 1);
+        let mut nlog2n_difference = Vec::with_capacity(n + 1);
+        log2.push(0.0);
+        nlog2n_difference.push(0.0);
         for i in 1..=n {
-            cache.push((i as f64).log2());
+            let i = i as f64;
+            let ilog2 = i.log2();
+            log2.push(ilog2);
+            let i_plus_one = i + 1.0;
+            nlog2n_difference.push(i_plus_one * i_plus_one.log2() - i * ilog2);
         }
-        Self { cache }
+        Self {
+            log2,
+            nlog2n_difference,
+        }
     }
 
     pub fn plog2p(&self, x: u32, n: u32) -> f64 {
         let p = (x as f64) / (n as f64);
-        let log2p = self.cache[x as usize] - self.cache[n as usize];
+        let log2p = self.log2[x as usize] - self.log2[n as usize];
         p * log2p
+    }
+
+    pub fn nlog2n_difference(&self, x: u32) -> f64 {
+        self.nlog2n_difference[x as usize]
     }
 }
 

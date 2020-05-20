@@ -457,14 +457,6 @@ impl<'a> VarOfInfoComputer<'a> {
     }
 }
 
-fn nlog2n(n: f64) -> f64 {
-    if n == 0.0 {
-        0.0
-    } else {
-        n * n.log2()
-    }
-}
-
 impl<'a> Computer for VarOfInfoComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
@@ -475,14 +467,14 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
         let mut sum = 0.0;
-        let n2 = self.cms[0].n2(subset_index) as f64;
-        sum += (self.cms.len() as f64) * (nlog2n(n2 + 1.0) - nlog2n(n2));
+        sum += (self.cms.len() as f64) * self.cache.nlog2n_difference(self.cms[0].n2(subset_index));
         for cm in &self.cms {
             let subset_index_fixed = cm.fixed_partition.label_of(i).unwrap();
-            let n1 = cm.n1(subset_index_fixed) as f64;
-            sum += nlog2n(n1 + 1.0) - nlog2n(n1);
-            let n12 = cm.n12(subset_index_fixed, subset_index) as f64;
-            sum -= 2.0 * (nlog2n(n12 + 1.0) - nlog2n(n12));
+            sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
+            sum -= 2.0
+                * self
+                    .cache
+                    .nlog2n_difference(cm.n12(subset_index_fixed, subset_index))
         }
         sum
     }
