@@ -457,6 +457,14 @@ impl<'a> VarOfInfoComputer<'a> {
     }
 }
 
+fn nlog2n(n: f64) -> f64 {
+    if n == 0.0 {
+        0.0
+    } else {
+        n * n.log2()
+    }
+}
+
 impl<'a> Computer for VarOfInfoComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
@@ -466,14 +474,17 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     }
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        for cm in &mut self.cms {
-            cm.add_with_index(i, subset_index);
+        let mut sum = 0.0;
+        let n2 = self.cms[0].n2(subset_index) as f64;
+        sum += (self.cms.len() as f64) * (nlog2n(n2 + 1.0) - nlog2n(n2));
+        for cm in &self.cms {
+            let subset_index_fixed = cm.fixed_partition.label_of(i).unwrap();
+            let n1 = cm.n1(subset_index_fixed) as f64;
+            sum += nlog2n(n1 + 1.0) - nlog2n(n1);
+            let n12 = cm.n12(subset_index_fixed, subset_index) as f64;
+            sum -= 2.0 * (nlog2n(n12 + 1.0) - nlog2n(n12));
         }
-        let result = vi_single_kernel(&self.cms);
-        for cm in &mut self.cms {
-            cm.remove_with_index(i, subset_index);
-        }
-        result
+        sum
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
