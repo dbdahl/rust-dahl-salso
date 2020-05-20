@@ -165,15 +165,17 @@ pub fn omariapprox_multiple(
 pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
     let mut sum = 0.0;
     for cm in cms {
+        let mut vi = 0.0;
         for k1 in 0..cm.k1() {
-            sum += cache.plog2p(cm.n1(k1), cm.n());
+            vi += cache.nlog2n(cm.n1(k1));
         }
         for k2 in 0..cm.k2() {
-            sum += cache.plog2p(cm.n2(k2), cm.n());
+            vi += cache.nlog2n(cm.n2(k2));
             for k1 in 0..cm.k1() {
-                sum -= 2.0 * cache.plog2p(cm.n12(k1,k2), cm.n());
+                vi -= 2.0 * cache.nlog2n(cm.n12(k1, k2));
             }
         }
+        sum += vi / (cm.n() as f64);
     }
     sum / (cms.len() as f64)
 }

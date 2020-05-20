@@ -83,6 +83,14 @@ impl Log2Cache {
         p * log2p
     }
 
+    pub fn nlog2n(&self, n: u32) -> f64 {
+        if n == 0 {
+            0.0
+        } else {
+            (n as f64) * self.log2[n as usize]
+        }
+    }
+
     pub fn nlog2n_difference(&self, x: u32) -> f64 {
         self.nlog2n_difference[x as usize]
     }
