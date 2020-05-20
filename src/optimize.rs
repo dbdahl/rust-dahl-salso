@@ -451,7 +451,7 @@ impl<'a> VarOfInfoComputer<'a> {
     pub fn new(draws: &'a [Partition], cache: &'a Log2Cache) -> VarOfInfoComputer<'a> {
         let cms: Vec<ConfusionMatrix> = draws
             .iter()
-            .map(|draw| ConfusionMatrix::empty(draw, cache))
+            .map(|draw| ConfusionMatrix::empty(draw))
             .collect();
         VarOfInfoComputer { cms, cache }
     }
@@ -500,11 +500,11 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        vi_single_kernel(&self.cms)
+        vi_single_kernel(&self.cms, self.cache)
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
-        vi_single_kernel(&self.cms)
+        vi_single_kernel(&self.cms, self.cache)
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {

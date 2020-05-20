@@ -60,14 +60,14 @@ pub fn binder_multiple(
 
 // Expectation of one minus adjusted Rand index
 
-pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+pub fn omari_single(partition: &Partition, draws: &[Partition]) -> f64 {
     pub fn n_choose_2_times_2(x: u32) -> f64 {
         let x = x as f64;
         x * (x - 1.0)
     }
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::filled(partition, draw, cache))
+        .map(|draw| ConfusionMatrix::filled(partition, draw))
         .collect();
     let mut sum = 0.0;
     for cm in &cms {
@@ -98,9 +98,8 @@ pub fn omari_multiple(
     assert_eq!(ni, draws.n_items());
     let partitions2 = partitions.get_all();
     let draws2 = draws.get_all();
-    let cache = Log2Cache::new(ni);
     for k in 0..partitions2.len() {
-        let vi = omari_single(&partitions2[k], &draws2[..], &cache);
+        let vi = omari_single(&partitions2[k], &draws2[..]);
         unsafe { *results.get_unchecked_mut(k) = vi };
     }
 }
@@ -163,16 +162,16 @@ pub fn omariapprox_multiple(
 
 // Expectation of the variation of information
 
-pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
+pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
     let mut sum = 0.0;
     for cm in cms {
         for k1 in 0..cm.k1() {
-            sum += cm.plogp1(k1);
+            sum += cache.plog2p(cm.n1(k1), cm.n());
         }
         for k2 in 0..cm.k2() {
-            sum += cm.plogp2(k2);
+            sum += cache.plog2p(cm.n2(k2), cm.n());
             for k1 in 0..cm.k1() {
-                sum -= 2.0 * cm.plogp12(k1, k2);
+                sum -= 2.0 * cache.plog2p(cm.n12(k1,k2), cm.n());
             }
         }
     }
@@ -182,9 +181,9 @@ pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
 pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::filled(partition, draw, cache))
+        .map(|draw| ConfusionMatrix::filled(partition, draw))
         .collect();
-    vi_single_kernel(&cms)
+    vi_single_kernel(&cms, cache)
 }
 
 pub fn vi_multiple(

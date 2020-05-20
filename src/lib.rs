@@ -93,11 +93,10 @@ pub struct ConfusionMatrix<'a> {
     fixed_partition: &'a Partition,
     k1_plus_one: usize,
     k2: usize,
-    cache: &'a Log2Cache,
 }
 
 impl<'a> ConfusionMatrix<'a> {
-    pub fn empty(fixed_partition: &'a Partition, cache: &'a Log2Cache) -> Self {
+    pub fn empty(fixed_partition: &'a Partition) -> Self {
         assert!(fixed_partition.subsets_are_exhaustive());
         let k1_plus_one = fixed_partition.n_subsets() + 1;
         let k2 = 0;
@@ -106,15 +105,10 @@ impl<'a> ConfusionMatrix<'a> {
             fixed_partition,
             k1_plus_one,
             k2,
-            cache,
         }
     }
 
-    pub fn filled(
-        dynamic_partition: &'a Partition,
-        fixed_partition: &'a Partition,
-        cache: &'a Log2Cache,
-    ) -> Self {
+    pub fn filled(dynamic_partition: &'a Partition, fixed_partition: &'a Partition) -> Self {
         assert!(fixed_partition.subsets_are_exhaustive());
         let n_items = fixed_partition.n_items();
         assert_eq!(dynamic_partition.n_items(), n_items);
@@ -125,7 +119,6 @@ impl<'a> ConfusionMatrix<'a> {
             fixed_partition,
             k1_plus_one,
             k2,
-            cache,
         };
         x.add_all(dynamic_partition);
         x
@@ -151,10 +144,6 @@ impl<'a> ConfusionMatrix<'a> {
         (self.n1(i) as f64) / (self.n() as f64)
     }
 
-    pub fn plogp1(&self, i: usize) -> f64 {
-        self.cache.plog2p(self.n1(i), self.n())
-    }
-
     pub fn n2(&self, j: usize) -> u32 {
         self.data[self.k1_plus_one * (j + 1)]
     }
@@ -163,20 +152,12 @@ impl<'a> ConfusionMatrix<'a> {
         (self.n2(j) as f64) / (self.n() as f64)
     }
 
-    pub fn plogp2(&self, j: usize) -> f64 {
-        self.cache.plog2p(self.n2(j), self.n())
-    }
-
     pub fn n12(&self, i: usize, j: usize) -> u32 {
         self.data[self.k1_plus_one * (j + 1) + (i + 1)]
     }
 
     pub fn p12(&self, i: usize, j: usize) -> f64 {
         (self.n12(i, j) as f64) / (self.n() as f64)
-    }
-
-    pub fn plogp12(&self, i: usize, j: usize) -> f64 {
-        self.cache.plog2p(self.n12(i, j), self.n())
     }
 
     pub fn new_subset(&mut self) {
