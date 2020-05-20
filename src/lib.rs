@@ -66,7 +66,7 @@ impl Log2Cache {
         let mut nlog2n_difference = Vec::with_capacity(n + 1);
         log2n.push(0.0);
         nlog2n.push(0.0);
-        //nlog2n_difference.push(0.0);
+        nlog2n_difference.push(0.0);
         for i in 1..=n {
             let i = i as f64;
             let log2i = i.log2();
