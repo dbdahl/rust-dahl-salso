@@ -83,9 +83,22 @@ pub struct ConfusionMatrix<'a> {
 }
 
 impl<'a> ConfusionMatrix<'a> {
-    pub fn new(
-        fixed_partition: &'a Partition,
+    pub fn empty(fixed_partition: &'a Partition, cache: &'a Log2Cache) -> Self {
+        assert!(fixed_partition.subsets_are_exhaustive());
+        let k1_plus_one = fixed_partition.n_subsets() + 1;
+        let k2 = 0;
+        Self {
+            data: vec![0; k1_plus_one * (k2 + 1)],
+            fixed_partition,
+            k1_plus_one,
+            k2,
+            cache,
+        }
+    }
+
+    pub fn filled(
         dynamic_partition: &'a Partition,
+        fixed_partition: &'a Partition,
         cache: &'a Log2Cache,
     ) -> Self {
         assert!(fixed_partition.subsets_are_exhaustive());
@@ -100,12 +113,7 @@ impl<'a> ConfusionMatrix<'a> {
             k2,
             cache,
         };
-        for item_index in 0..n_items {
-            match dynamic_partition.label_of(item_index) {
-                Some(subset_index) => x.tally(item_index, subset_index),
-                None => {}
-            }
-        }
+        x.add_all(dynamic_partition);
         x
     }
 
@@ -157,29 +165,44 @@ impl<'a> ConfusionMatrix<'a> {
         self.cache.plog2p(self.n12(i, j), self.n())
     }
 
-    pub fn add(&mut self, dynamic_partition: &mut Partition, item_index: usize) {
-        let subset_index = dynamic_partition.n_subsets();
-        dynamic_partition.add(item_index);
+    pub fn new_subset(&mut self) {
+        self.k2 += 1;
         self.data.extend(vec![0; self.k1_plus_one].iter());
-        self.tally(item_index, subset_index);
     }
 
-    pub fn add_with_index(
-        &mut self,
-        dynamic_partition: &mut Partition,
-        item_index: usize,
-        subset_index: usize,
-    ) {
-        dynamic_partition.add_with_index(item_index, subset_index);
-        self.tally(item_index, subset_index);
+    fn add_all(&mut self, partition: &Partition) {
+        for item_index in 0..partition.n_items() {
+            match partition.label_of(item_index) {
+                Some(subset_index) => self.add_with_index(item_index, subset_index),
+                None => {}
+            }
+        }
     }
 
-    fn tally(&mut self, item_index: usize, subset_index: usize) {
+    fn add_with_index(&mut self, item_index: usize, subset_index: usize) {
         self.data[0] += 1;
         let offset = self.k1_plus_one * (subset_index + 1);
         self.data[offset] += 1;
         let ii_plus_one = self.fixed_partition.label_of(item_index).unwrap() + 1;
         self.data[ii_plus_one] += 1;
         self.data[offset + ii_plus_one] += 1;
+    }
+
+    fn remove_with_index(&mut self, item_index: usize, subset_index: usize) {
+        self.data[0] -= 1;
+        let offset = self.k1_plus_one * (subset_index + 1);
+        self.data[offset] -= 1;
+        let ii_plus_one = self.fixed_partition.label_of(item_index).unwrap() + 1;
+        self.data[ii_plus_one] -= 1;
+        self.data[offset + ii_plus_one] -= 1;
+    }
+
+    fn swap_remove(&mut self, killed_subset_index: usize, moved_subset_index: usize) {
+        for i in 0..self.k1_plus_one {
+            self.data[self.k1_plus_one * (killed_subset_index + 1) + i] =
+                self.data[self.k1_plus_one * (moved_subset_index + 1) + i]
+        }
+        self.k2 -= 1;
+        self.data.truncate(self.k1_plus_one * (self.k2 + 1));
     }
 }

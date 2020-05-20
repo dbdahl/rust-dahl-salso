@@ -67,7 +67,7 @@ pub fn omari_single(partition: &Partition, draws: &[Partition], cache: &Log2Cach
     }
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::new(draw, partition, cache))
+        .map(|draw| ConfusionMatrix::filled(partition, draw, cache))
         .collect();
     let mut sum = 0.0;
     for cm in &cms {
@@ -163,11 +163,7 @@ pub fn omariapprox_multiple(
 
 // Expectation of the variation of information
 
-pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::new(draw, partition, cache))
-        .collect();
+pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
     let mut sum = 0.0;
     for cm in cms {
         for k1 in 0..cm.k1() {
@@ -180,7 +176,15 @@ pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) 
             }
         }
     }
-    sum / (draws.len() as f64)
+    sum / (cms.len() as f64)
+}
+
+pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::filled(partition, draw, cache))
+        .collect();
+    vi_single_kernel(&cms)
 }
 
 pub fn vi_multiple(
