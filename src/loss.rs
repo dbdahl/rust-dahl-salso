@@ -60,17 +60,13 @@ pub fn binder_multiple(
 
 // Expectation of one minus adjusted Rand index
 
-pub fn omari_single(partition: &Partition, draws: &[Partition]) -> f64 {
+pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
     pub fn n_choose_2_times_2(x: u32) -> f64 {
         let x = x as f64;
         x * (x - 1.0)
     }
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::filled(partition, draw))
-        .collect();
     let mut sum = 0.0;
-    for cm in &cms {
+    for cm in cms {
         let mut sum1 = 0.0;
         let mut sum2 = 0.0;
         let mut sum12 = 0.0;
@@ -87,6 +83,14 @@ pub fn omari_single(partition: &Partition, draws: &[Partition]) -> f64 {
         sum += (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
     }
     1.0 - sum / (cms.len() as f64)
+}
+
+pub fn omari_single(partition: &Partition, draws: &[Partition]) -> f64 {
+    let cms: Vec<ConfusionMatrix> = draws
+        .iter()
+        .map(|draw| ConfusionMatrix::filled(partition, draw))
+        .collect();
+    omari_single_kernel(&cms)
 }
 
 pub fn omari_multiple(

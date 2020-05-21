@@ -2,8 +2,8 @@ extern crate num_cpus;
 extern crate rand;
 
 use crate::loss::{
-    binder_single_kernel, omariapprox_single, vi_single_kernel, vilb_expected_loss_constant,
-    vilb_single_kernel,
+    binder_single_kernel, omari_single_kernel, omariapprox_single, vi_single_kernel,
+    vilb_expected_loss_constant, vilb_single_kernel,
 };
 use crate::{ConfusionMatrix, Log2Cache, LossFunction, PartitionDistributionInformation};
 use dahl_partition::*;
@@ -142,157 +142,69 @@ impl<'a> Computer for BinderComputer<'a> {
 
 // Expectation of the one minus adjusted Rand index loss
 
-#[derive(Debug)]
-struct OneMinusARICacheUnit {
-    item: usize,
-    committed_sum: f64,
-    committed_contribution: f64,
-    speculative_sum: f64,
-    speculative_contribution: f64,
-}
-
-#[derive(Debug)]
-struct OneMinusARISubsetCalculations {
-    cached_units: Vec<OneMinusARICacheUnit>,
-    committed_loss: f64,
-    speculative_loss: f64,
-}
-
 pub struct OneMinusARIComputer<'a> {
-    subsets: Vec<OneMinusARISubsetCalculations>,
-    psm: &'a SquareMatrixBorrower<'a>,
-    draws: &'a [Partition],
+    cms: Vec<ConfusionMatrix<'a>>,
 }
 
 impl<'a> OneMinusARIComputer<'a> {
-    pub fn new(
-        draws: &'a [Partition],
-        psm: &'a SquareMatrixBorrower<'a>,
-    ) -> OneMinusARIComputer<'a> {
-        OneMinusARIComputer {
-            subsets: Vec::new(),
-            psm,
-            draws,
-        }
+    pub fn new(draws: &'a [Partition]) -> OneMinusARIComputer<'a> {
+        let cms: Vec<ConfusionMatrix> = draws
+            .iter()
+            .map(|draw| ConfusionMatrix::empty(draw))
+            .collect();
+        OneMinusARIComputer { cms }
     }
 }
 
 impl<'a> Computer for OneMinusARIComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
         partition.new_subset();
-        self.subsets.push(OneMinusARISubsetCalculations {
-            cached_units: Vec::new(),
-            committed_loss: 0.0,
-            speculative_loss: 0.0,
-        })
+        for cm in &mut self.cms {
+            cm.new_subset();
+        }
     }
 
-    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        let subset_of_partition = &partition.subsets()[subset_index];
-        if subset_of_partition.n_items() == 0 {
-            self.subsets[subset_index]
-                .cached_units
-                .push(OneMinusARICacheUnit {
-                    item: i,
-                    committed_sum: 0.0,
-                    committed_contribution: 0.0,
-                    speculative_sum: 1.0,
-                    speculative_contribution: 0.0,
-                });
-            return 0.0;
+    fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
+        for cm in &mut self.cms {
+            cm.add_with_index(i, subset_index);
         }
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.speculative_sum =
-                cu.committed_sum + unsafe { *self.psm.get_unchecked((cu.item, i)) };
-            cu.speculative_contribution = cu.speculative_sum.log2();
+        let result = omari_single_kernel(&self.cms);
+        for cm in &mut self.cms {
+            cm.remove_with_index(i, subset_index);
         }
-        let sum = subset_of_partition
-            .items()
-            .iter()
-            .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) })
-            + 1.0; // Because self.psm[(i, i)] == 1;
-        self.subsets[subset_index]
-            .cached_units
-            .push(OneMinusARICacheUnit {
-                item: i,
-                committed_sum: 0.0,
-                committed_contribution: 0.0,
-                speculative_sum: sum,
-                speculative_contribution: sum.log2(),
-            });
-        let nif = subset_of_partition.n_items() as f64;
-        let s1 = (nif + 1.0) * (nif + 1.0).log2();
-        let s2 = self.subsets[subset_index]
-            .cached_units
-            .iter()
-            .fold(0.0, |s, cu| s + cu.speculative_contribution);
-        self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
-        self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
+        result
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        for (index, subset) in self.subsets.iter_mut().enumerate() {
-            if index == subset_index {
-                for cu in subset.cached_units.iter_mut() {
-                    cu.committed_sum = cu.speculative_sum;
-                    cu.committed_contribution = cu.speculative_contribution;
-                }
-            } else {
-                subset.cached_units.pop();
-            }
-        }
-        self.subsets[subset_index].committed_loss = self.subsets[subset_index].speculative_loss;
         partition.add_with_index(i, subset_index);
+        for cm in &mut self.cms {
+            cm.add_with_index(i, subset_index);
+        }
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         let subset_index = partition.label_of(i).unwrap();
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
-            cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
-            cu.committed_contribution = cu.committed_sum.log2();
+        for cm in &mut self.cms {
+            cm.remove_with_index(i, subset_index);
         }
-        let pos = self.subsets[subset_index]
-            .cached_units
-            .iter()
-            .enumerate()
-            .find(|cu| cu.1.item == i)
-            .unwrap()
-            .0;
-        self.subsets[subset_index].cached_units.swap_remove(pos);
-        self.subsets[subset_index].committed_loss =
-            match partition.subsets()[subset_index].n_items() {
-                0 => 0.0,
-                ni => {
-                    let nif = ni as f64;
-                    nif * nif.log2()
-                        - 2.0
-                            * self.subsets[subset_index]
-                                .cached_units
-                                .iter()
-                                .fold(0.0, |s, cu| s + cu.committed_contribution)
-                }
-            };
         partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            self.subsets.swap_remove(killed_subset_index);
-            assert_eq!(moved_subset_index, self.subsets.len());
+            for cm in &mut self.cms {
+                cm.swap_remove(killed_subset_index, moved_subset_index);
+            }
         });
         subset_index
     }
 
     fn expected_loss(&self) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
+        omari_single_kernel(&self.cms)
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
-        self.subsets
-            .iter()
-            .fold(0.0, |s, subset| s + subset.committed_loss)
+        omari_single_kernel(&self.cms)
     }
 
     fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (kernel + vilb_expected_loss_constant(self.psm)) / nif
+        kernel
     }
 }
 
@@ -873,7 +785,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::OneMinusARI => {
                     //
-                    Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws(), psm.unwrap())))
+                    Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws())))
                 }
                 LossFunction::OneMinusARIapprox => {
                     //
@@ -914,9 +826,9 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                 LossFunction::Binder => {
                                     Box::new(|| Box::new(BinderComputer::new(psm.unwrap())))
                                 }
-                                LossFunction::OneMinusARI => Box::new(|| {
-                                    Box::new(OneMinusARIComputer::new(pdi.draws(), psm.unwrap()))
-                                }),
+                                LossFunction::OneMinusARI => {
+                                    Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws())))
+                                }
                                 LossFunction::OneMinusARIapprox => Box::new(|| {
                                     Box::new(OneMinusARIapproxComputer::new(psm.unwrap()))
                                 }),
