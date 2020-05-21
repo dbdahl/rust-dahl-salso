@@ -751,7 +751,6 @@ pub fn minimize_once_by_salso<'a, T: Rng>(
 pub fn minimize_by_salso<'a, T: Rng>(
     n_items: usize,
     pdi: PartitionDistributionInformation,
-    psm: Option<&'a SquareMatrixBorrower<'a>>,
     loss_function: LossFunction,
     max_size: usize,
     max_scans: u32,
@@ -781,7 +780,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
             let computer_factory: Box<dyn Fn() -> Box<dyn Computer>> = match loss_function {
                 LossFunction::Binder => {
                     //
-                    Box::new(|| Box::new(BinderComputer::new(psm.unwrap())))
+                    Box::new(|| Box::new(BinderComputer::new(pdi.psm())))
                 }
                 LossFunction::OneMinusARI => {
                     //
@@ -789,7 +788,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::OneMinusARIapprox => {
                     //
-                    Box::new(|| Box::new(OneMinusARIapproxComputer::new(psm.unwrap())))
+                    Box::new(|| Box::new(OneMinusARIapproxComputer::new(pdi.psm())))
                 }
                 LossFunction::VI => {
                     //
@@ -797,7 +796,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::VIlb => {
                     //
-                    Box::new(|| Box::new(VarOfInfoLBComputer::new(psm.unwrap())))
+                    Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
                 }
             };
             minimize_once_by_salso(
@@ -824,19 +823,19 @@ pub fn minimize_by_salso<'a, T: Rng>(
                         let computer_factory: Box<dyn Fn() -> Box<dyn Computer>> =
                             match loss_function {
                                 LossFunction::Binder => {
-                                    Box::new(|| Box::new(BinderComputer::new(psm.unwrap())))
+                                    Box::new(|| Box::new(BinderComputer::new(pdi.psm())))
                                 }
                                 LossFunction::OneMinusARI => {
                                     Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws())))
                                 }
-                                LossFunction::OneMinusARIapprox => Box::new(|| {
-                                    Box::new(OneMinusARIapproxComputer::new(psm.unwrap()))
-                                }),
+                                LossFunction::OneMinusARIapprox => {
+                                    Box::new(|| Box::new(OneMinusARIapproxComputer::new(pdi.psm())))
+                                }
                                 LossFunction::VI => Box::new(|| {
                                     Box::new(VarOfInfoComputer::new(pdi.draws(), cache_ref))
                                 }),
                                 LossFunction::VIlb => {
-                                    Box::new(|| Box::new(VarOfInfoLBComputer::new(psm.unwrap())))
+                                    Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
                                 }
                             };
                         let result = minimize_once_by_salso(
@@ -929,7 +928,6 @@ mod tests_optimize {
         minimize_by_salso(
             n_items,
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
-            Some(psm_view),
             LossFunction::VIlb,
             2,
             10,
@@ -968,10 +966,10 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_curtailed_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
-    let ni = usize::try_from(n_items).unwrap();
+    let n_items = usize::try_from(n_items).unwrap();
     let nd = usize::try_from(n_draws).unwrap();
-    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, ni, true).get_all();
-    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
+    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).get_all();
+    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
     let max_size = usize::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let batch_size = u32::try_from(batch_size).unwrap();
@@ -985,16 +983,24 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     };
     let parallel = parallel != 0;
     let mut rng = mk_rng_isaac(seed_ptr);
-    let loss_function = LossFunction::from_code(loss);
-    if loss_function.is_none() {
-        panic!("Unsupported loss method: code = {}", loss);
-    }
+    let (loss_function, pdi) = match LossFunction::from_code(loss) {
+        Some(loss_function) => match loss_function {
+            LossFunction::Binder | LossFunction::OneMinusARIapprox | LossFunction::VIlb => (
+                loss_function,
+                PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
+            ),
+            LossFunction::OneMinusARI | LossFunction::VI => (
+                loss_function,
+                PartitionDistributionInformation::Draws(&draws),
+            ),
+        },
+        None => panic!("Unsupported loss method: code = {}", loss),
+    };
     let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
         minimize_by_salso(
-            ni,
-            PartitionDistributionInformation::Draws(&draws[..]),
-            Some(&psm),
-            loss_function.unwrap(),
+            n_items,
+            pdi,
+            loss_function,
             max_size,
             max_scans,
             batch_size,
@@ -1006,7 +1012,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
             parallel,
             &mut rng,
         );
-    let results_slice = slice::from_raw_parts_mut(results_labels_ptr, ni);
+    let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
     for (i, v) in minimizer.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
@@ -1026,13 +1032,14 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
 ) {
     let ni = usize::try_from(n_items).unwrap();
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
-    let loss_function = LossFunction::from_code(loss);
-    let f = match loss_function {
-        Some(LossFunction::Binder) => binder_single_kernel,
-        Some(LossFunction::OneMinusARI) => panic!("No implementation for omARI."),
-        Some(LossFunction::OneMinusARIapprox) => omariapprox_single,
-        Some(LossFunction::VI) => panic!("No implementation for VI."),
-        Some(LossFunction::VIlb) => vilb_single_kernel,
+    let f = match LossFunction::from_code(loss) {
+        Some(loss_function) => match loss_function {
+            LossFunction::Binder => binder_single_kernel,
+            LossFunction::OneMinusARI => panic!("No implementation for omARI."),
+            LossFunction::OneMinusARIapprox => omariapprox_single,
+            LossFunction::VI => panic!("No implementation for VI."),
+            LossFunction::VIlb => vilb_single_kernel,
+        },
         None => panic!("Unsupported loss method: code = {}", loss),
     };
     let minimizer = minimize_by_enumeration(f, &psm);
