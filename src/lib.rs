@@ -241,16 +241,18 @@ pub struct ConfusionMatrix2<'a> {
 }
 
 impl<'a> ConfusionMatrix2<'a> {
-
     pub fn empty(fixed_partition: &'a ClusterLabels) -> Self {
         let k1_plus_one = fixed_partition.n_clusters + 1;
         let k2 = 0;
-        Self {
-            data: vec![0; k1_plus_one * (k2 + 1)],
+        let data = Vec::with_capacity(2 * k1_plus_one * k1_plus_one);
+        let mut x = Self {
+            data,
             fixed_partition,
             k1_plus_one,
             k2,
-        }
+        };
+        x.extend();
+        x
     }
 
     pub fn filled(
@@ -309,7 +311,13 @@ impl<'a> ConfusionMatrix2<'a> {
 
     pub fn new_subset(&mut self) {
         self.k2 += 1;
-        self.data.extend(vec![0; self.k1_plus_one].iter());
+        self.extend();
+    }
+
+    fn extend(&mut self) {
+        for _ in 0..self.k1_plus_one {
+            self.data.push(0)
+        }
     }
 
     fn add_all(&mut self, partition: &ClusterLabels) {
@@ -341,9 +349,11 @@ impl<'a> ConfusionMatrix2<'a> {
     }
 
     fn swap_remove(&mut self, killed_label: usize, moved_label: usize) {
-        for i in 0..self.k1_plus_one {
-            self.data[self.k1_plus_one * (killed_label + 1) + i] =
-                self.data[self.k1_plus_one * (moved_label + 1) + i]
+        if killed_label != moved_label {
+            for i in 0..self.k1_plus_one {
+                self.data[self.k1_plus_one * (killed_label + 1) + i] =
+                    self.data[self.k1_plus_one * (moved_label + 1) + i]
+            }
         }
         self.k2 -= 1;
         self.data.truncate(self.k1_plus_one * (self.k2 + 1));

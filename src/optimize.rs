@@ -976,8 +976,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
 ) {
     let n_items = usize::try_from(n_items).unwrap();
     let nd = usize::try_from(n_draws).unwrap();
-    //let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).get_all();
-    let draws = Vec::new();
+    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).get_all();
     let draws2 = standardize_labels(
         PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).data(),
         n_items,
