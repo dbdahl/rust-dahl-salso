@@ -1,8 +1,10 @@
 use dahl_partition::*;
 
 use crate::ConfusionMatrix;
+use crate::ConfusionMatrix2;
 use crate::Log2Cache;
 use crate::LossFunction;
+use crate::{standardize_labels, ClusterLabels};
 use std::slice;
 
 // Expectation of Binder loss
@@ -166,17 +168,17 @@ pub fn omariapprox_multiple(
 
 // Expectation of the variation of information
 
-pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
+pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix2>, cache: &Log2Cache) -> f64 {
     let mut sum = 0.0;
     for cm in cms {
         let mut vi = 0.0;
         for k1 in 0..cm.k1() {
-            vi += cache.nlog2n(cm.n1(k1));
+            vi += cache.nlog2n_usize(cm.n1(k1));
         }
         for k2 in 0..cm.k2() {
-            vi += cache.nlog2n(cm.n2(k2));
+            vi += cache.nlog2n_usize(cm.n2(k2));
             for k1 in 0..cm.k1() {
-                vi -= 2.0 * cache.nlog2n(cm.n12(k1, k2));
+                vi -= 2.0 * cache.nlog2n_usize(cm.n12(k1, k2));
             }
         }
         sum += vi / (cm.n() as f64);
@@ -184,10 +186,10 @@ pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
     sum / (cms.len() as f64)
 }
 
-pub fn vi_single(partition: &Partition, draws: &[Partition], cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
+pub fn vi_single(partition: &ClusterLabels, draws: &Vec<ClusterLabels>, cache: &Log2Cache) -> f64 {
+    let cms: Vec<ConfusionMatrix2> = draws
         .iter()
-        .map(|draw| ConfusionMatrix::filled(partition, draw))
+        .map(|draw| ConfusionMatrix2::filled(partition, draw))
         .collect();
     vi_single_kernel(&cms, cache)
 }
@@ -197,13 +199,13 @@ pub fn vi_multiple(
     draws: &PartitionsHolderBorrower,
     results: &mut [f64],
 ) {
-    let ni = partitions.n_items();
-    assert_eq!(ni, draws.n_items());
-    let partitions2 = partitions.get_all();
-    let draws2 = draws.get_all();
-    let cache = Log2Cache::new(ni);
-    for k in 0..partitions2.len() {
-        let vi = vi_single(&partitions2[k], &draws2[..], &cache);
+    let n_items = partitions.n_items();
+    assert_eq!(n_items, draws.n_items());
+    let partitions2 = standardize_labels(partitions.data(), n_items);
+    let draws2 = standardize_labels(draws.data(), n_items);
+    let cache = Log2Cache::new(n_items);
+    for (k, partition2) in partitions2.iter().enumerate() {
+        let vi = vi_single(partition2, &draws2, &cache);
         unsafe { *results.get_unchecked_mut(k) = vi };
     }
 }

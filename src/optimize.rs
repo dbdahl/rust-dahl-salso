@@ -5,7 +5,10 @@ use crate::loss::{
     binder_single_kernel, omari_single_kernel, omariapprox_single, vi_single_kernel,
     vilb_expected_loss_constant, vilb_single_kernel,
 };
-use crate::{ConfusionMatrix, Log2Cache, LossFunction, PartitionDistributionInformation};
+use crate::{
+    standardize_labels, ClusterLabels, ConfusionMatrix, ConfusionMatrix2, Log2Cache, LossFunction,
+    PartitionDistributionInformation,
+};
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
@@ -355,15 +358,15 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
 // Expectation of the variation of information loss
 
 pub struct VarOfInfoComputer<'a> {
-    cms: Vec<ConfusionMatrix<'a>>,
+    cms: Vec<ConfusionMatrix2<'a>>,
     cache: &'a Log2Cache,
 }
 
 impl<'a> VarOfInfoComputer<'a> {
-    pub fn new(draws: &'a [Partition], cache: &'a Log2Cache) -> VarOfInfoComputer<'a> {
-        let cms: Vec<ConfusionMatrix> = draws
+    pub fn new(draws: &'a Vec<ClusterLabels>, cache: &'a Log2Cache) -> VarOfInfoComputer<'a> {
+        let cms: Vec<ConfusionMatrix2> = draws
             .iter()
-            .map(|draw| ConfusionMatrix::empty(draw))
+            .map(|draw| ConfusionMatrix2::empty(draw))
             .collect();
         VarOfInfoComputer { cms, cache }
     }
@@ -379,14 +382,19 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
         let mut sum = 0.0;
-        sum += (self.cms.len() as f64) * self.cache.nlog2n_difference(self.cms[0].n2(subset_index));
+        sum += (self.cms.len() as f64)
+            * self
+                .cache
+                .nlog2n_difference_usize(self.cms[0].n2(subset_index));
         for cm in &self.cms {
-            let subset_index_fixed = cm.fixed_partition.label_of(i).unwrap();
-            sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
+            let subset_index_fixed = cm.fixed_partition.labels[i];
+            sum += self
+                .cache
+                .nlog2n_difference_usize(cm.n1(subset_index_fixed));
             sum -= 2.0
                 * self
                     .cache
-                    .nlog2n_difference(cm.n12(subset_index_fixed, subset_index))
+                    .nlog2n_difference_usize(cm.n12(subset_index_fixed, subset_index))
         }
         sum
     }
@@ -792,7 +800,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::VI => {
                     //
-                    Box::new(|| Box::new(VarOfInfoComputer::new(pdi.draws(), &cache)))
+                    Box::new(|| Box::new(VarOfInfoComputer::new(pdi.draws2(), &cache)))
                 }
                 LossFunction::VIlb => {
                     //
@@ -832,7 +840,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                     Box::new(|| Box::new(OneMinusARIapproxComputer::new(pdi.psm())))
                                 }
                                 LossFunction::VI => Box::new(|| {
-                                    Box::new(VarOfInfoComputer::new(pdi.draws(), cache_ref))
+                                    Box::new(VarOfInfoComputer::new(pdi.draws2(), cache_ref))
                                 }),
                                 LossFunction::VIlb => {
                                     Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
@@ -968,7 +976,12 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
 ) {
     let n_items = usize::try_from(n_items).unwrap();
     let nd = usize::try_from(n_draws).unwrap();
-    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).get_all();
+    //let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).get_all();
+    let draws = Vec::new();
+    let draws2 = standardize_labels(
+        PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).data(),
+        n_items,
+    );
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
     let max_size = usize::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
@@ -989,9 +1002,13 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
                 loss_function,
                 PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
             ),
-            LossFunction::OneMinusARI | LossFunction::VI => (
+            LossFunction::OneMinusARI => (
                 loss_function,
                 PartitionDistributionInformation::Draws(&draws),
+            ),
+            LossFunction::VI => (
+                loss_function,
+                PartitionDistributionInformation::Draws2(&draws2),
             ),
         },
         None => panic!("Unsupported loss method: code = {}", loss),

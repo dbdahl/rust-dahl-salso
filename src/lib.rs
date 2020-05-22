@@ -9,10 +9,12 @@ pub mod optimize;
 pub mod psm;
 
 use dahl_partition::*;
+use std::collections::HashMap;
 
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
     Draws(&'a [Partition]),
+    Draws2(&'a Vec<ClusterLabels>),
     PairwiseSimilarityMatrix(&'a SquareMatrixBorrower<'a>),
 }
 
@@ -20,6 +22,12 @@ impl<'a> PartitionDistributionInformation<'a> {
     pub fn draws(self) -> &'a [Partition] {
         match self {
             PartitionDistributionInformation::Draws(d) => d,
+            _ => panic!("Not available."),
+        }
+    }
+    pub fn draws2(self) -> &'a Vec<ClusterLabels> {
+        match self {
+            PartitionDistributionInformation::Draws2(d) => d,
             _ => panic!("Not available."),
         }
     }
@@ -94,6 +102,20 @@ impl Log2Cache {
 
     pub fn nlog2n_difference(&self, x: u32) -> f64 {
         self.nlog2n_difference[x as usize]
+    }
+
+    pub fn plog2p_usize(&self, x: usize, n: usize) -> f64 {
+        let p = (x as f64) / (n as f64);
+        let log2p = self.log2n[x] - self.log2n[n];
+        p * log2p
+    }
+
+    pub fn nlog2n_usize(&self, n: usize) -> f64 {
+        self.nlog2n[n]
+    }
+
+    pub fn nlog2n_difference_usize(&self, x: usize) -> f64 {
+        self.nlog2n_difference[x]
     }
 }
 
@@ -209,4 +231,149 @@ impl<'a> ConfusionMatrix<'a> {
         self.k2 -= 1;
         self.data.truncate(self.k1_plus_one * (self.k2 + 1));
     }
+}
+
+pub struct ConfusionMatrix2<'a> {
+    data: Vec<usize>,
+    fixed_partition: &'a ClusterLabels,
+    k1_plus_one: usize,
+    k2: usize,
+}
+
+impl<'a> ConfusionMatrix2<'a> {
+
+    pub fn empty(fixed_partition: &'a ClusterLabels) -> Self {
+        let k1_plus_one = fixed_partition.n_clusters + 1;
+        let k2 = 0;
+        Self {
+            data: vec![0; k1_plus_one * (k2 + 1)],
+            fixed_partition,
+            k1_plus_one,
+            k2,
+        }
+    }
+
+    pub fn filled(
+        dynamic_partition: &'a ClusterLabels,
+        fixed_partition: &'a ClusterLabels,
+    ) -> Self {
+        let n_items = fixed_partition.labels.len();
+        assert_eq!(dynamic_partition.labels.len(), n_items);
+        let k1_plus_one = fixed_partition.n_clusters + 1;
+        let k2 = dynamic_partition.n_clusters;
+        let mut x = Self {
+            data: vec![0; k1_plus_one * (k2 + 1)],
+            fixed_partition,
+            k1_plus_one,
+            k2,
+        };
+        x.add_all(dynamic_partition);
+        x
+    }
+
+    pub fn k1(&self) -> usize {
+        self.k1_plus_one - 1
+    }
+
+    pub fn k2(&self) -> usize {
+        self.k2
+    }
+
+    pub fn n(&self) -> usize {
+        self.data[0]
+    }
+
+    pub fn n1(&self, i: usize) -> usize {
+        self.data[i + 1]
+    }
+
+    pub fn p1(&self, i: usize) -> f64 {
+        (self.n1(i) as f64) / (self.n() as f64)
+    }
+
+    pub fn n2(&self, j: usize) -> usize {
+        self.data[self.k1_plus_one * (j + 1)]
+    }
+
+    pub fn p2(&self, j: usize) -> f64 {
+        (self.n2(j) as f64) / (self.n() as f64)
+    }
+
+    pub fn n12(&self, i: usize, j: usize) -> usize {
+        self.data[self.k1_plus_one * (j + 1) + (i + 1)]
+    }
+
+    pub fn p12(&self, i: usize, j: usize) -> f64 {
+        (self.n12(i, j) as f64) / (self.n() as f64)
+    }
+
+    pub fn new_subset(&mut self) {
+        self.k2 += 1;
+        self.data.extend(vec![0; self.k1_plus_one].iter());
+    }
+
+    fn add_all(&mut self, partition: &ClusterLabels) {
+        //Which is faster?
+        //for item_index in 0..partition.labels.len() {
+        //    self.add_with_index(item_index, partition.labels[item_index]);
+        //}
+        for (item_index, label) in partition.labels.iter().enumerate() {
+            self.add_with_index(item_index, *label);
+        }
+    }
+
+    fn add_with_index(&mut self, item_index: usize, label: usize) {
+        self.data[0] += 1;
+        let offset = self.k1_plus_one * (label + 1);
+        self.data[offset] += 1;
+        let ii_plus_one = self.fixed_partition.labels[item_index] + 1;
+        self.data[ii_plus_one] += 1;
+        self.data[offset + ii_plus_one] += 1;
+    }
+
+    fn remove_with_index(&mut self, item_index: usize, label: usize) {
+        self.data[0] -= 1;
+        let offset = self.k1_plus_one * (label + 1);
+        self.data[offset] -= 1;
+        let ii_plus_one = self.fixed_partition.labels[item_index] + 1;
+        self.data[ii_plus_one] -= 1;
+        self.data[offset + ii_plus_one] -= 1;
+    }
+
+    fn swap_remove(&mut self, killed_label: usize, moved_label: usize) {
+        for i in 0..self.k1_plus_one {
+            self.data[self.k1_plus_one * (killed_label + 1) + i] =
+                self.data[self.k1_plus_one * (moved_label + 1) + i]
+        }
+        self.k2 -= 1;
+        self.data.truncate(self.k1_plus_one * (self.k2 + 1));
+    }
+}
+
+pub struct ClusterLabels {
+    labels: Vec<usize>,
+    n_clusters: usize,
+}
+
+pub fn standardize_labels(labels: &[i32], n_items: usize) -> Vec<ClusterLabels> {
+    let n_samples = labels.len() / n_items;
+    let mut new_labels_collection = Vec::with_capacity(n_samples);
+    for i in 0..n_samples {
+        let mut new_labels = Vec::with_capacity(n_items);
+        let mut map = HashMap::new();
+        let mut next_new_label = 0;
+        for j in 0..n_items {
+            let c = *map.entry(labels[j * n_samples + i]).or_insert_with(|| {
+                let c = next_new_label;
+                next_new_label += 1;
+                c
+            });
+            new_labels.push(c);
+        }
+        new_labels_collection.push(ClusterLabels {
+            labels: new_labels,
+            n_clusters: next_new_label,
+        });
+    }
+    new_labels_collection
 }
