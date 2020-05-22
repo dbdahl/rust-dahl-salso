@@ -640,8 +640,8 @@ fn micro_optimized_allocation<'a, T: Rng>(
     subset_index
 }
 
-pub fn minimize_once_by_salso<'a, T: Rng>(
-    computer_factory: Box<dyn Fn() -> Box<dyn Computer + 'a> + 'a>,
+#[derive(Debug, Copy, Clone)]
+pub struct SALSOParameters {
     n_items: usize,
     max_label: usize,
     max_scans: u32,
@@ -649,69 +649,74 @@ pub fn minimize_once_by_salso<'a, T: Rng>(
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
+}
+
+pub fn minimize_once_by_salso<'a, T: Rng>(
+    computer_factory: Box<dyn Fn() -> Box<dyn Computer + 'a> + 'a>,
+    p: SALSOParameters,
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
     let probability_of_exploration_distribution = Gamma::new(
-        probability_of_exploration_shape,
-        1.0 / probability_of_exploration_rate,
+        p.probability_of_exploration_shape,
+        1.0 / p.probability_of_exploration_rate,
     )
     .unwrap();
     let mut global_minimum = std::f64::INFINITY;
-    let mut global_best = Partition::new(n_items);
+    let mut global_best = Partition::new(p.n_items);
     let mut global_n_scans = 0;
     let mut global_pr_explore = 0.0;
-    let mut permutation: Vec<usize> = (0..n_items).collect();
+    let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut permutations_counter = 0;
-    while permutations_counter < n_permutations {
+    while permutations_counter < p.n_permutations {
         let mut computer = computer_factory();
-        let mut partition = Partition::new(n_items);
+        let mut partition = Partition::new(p.n_items);
         permutation.shuffle(rng);
         // Initial allocation
-        let pr_explore = if max_scans == 0 || probability_of_exploration_probability_at_zero >= 1.0
-        {
-            0.0
-        } else {
-            if probability_of_exploration_probability_at_zero < 0.0 {
-                -probability_of_exploration_probability_at_zero
-            } else {
-                if rng.gen_range(0.0, 1.0) <= probability_of_exploration_probability_at_zero {
-                    0.0
-                } else {
-                    probability_of_exploration_distribution.sample(rng).min(1.0)
-                }
-            }
-        };
-        for i in 0..n_items {
-            ensure_empty_subset(&mut partition, &mut computer, max_label);
-            let ii = unsafe { *permutation.get_unchecked(i) };
-            micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
-        }
-        // Sweetening scans
-        let mut stop_sweetening = false;
-        let mut n_scans = 0;
-        while n_scans < max_scans {
-            if n_scans == max_scans - 1 {
-                stop_sweetening = true;
-            }
-            permutation.shuffle(rng);
-            let mut no_change = true;
-            let pr_explore = if stop_sweetening
-                || probability_of_exploration_probability_at_zero >= 1.0
-            {
+        let pr_explore =
+            if p.max_scans == 0 || p.probability_of_exploration_probability_at_zero >= 1.0 {
                 0.0
             } else {
-                if probability_of_exploration_probability_at_zero < 0.0 {
-                    -probability_of_exploration_probability_at_zero
+                if p.probability_of_exploration_probability_at_zero < 0.0 {
+                    -p.probability_of_exploration_probability_at_zero
                 } else {
-                    if rng.gen_range(0.0, 1.0) <= probability_of_exploration_probability_at_zero {
+                    if rng.gen_range(0.0, 1.0) <= p.probability_of_exploration_probability_at_zero {
                         0.0
                     } else {
                         probability_of_exploration_distribution.sample(rng).min(1.0)
                     }
                 }
             };
-            for i in 0..n_items {
-                ensure_empty_subset(&mut partition, &mut computer, max_label);
+        for i in 0..p.n_items {
+            ensure_empty_subset(&mut partition, &mut computer, p.max_label);
+            let ii = unsafe { *permutation.get_unchecked(i) };
+            micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
+        }
+        // Sweetening scans
+        let mut stop_sweetening = false;
+        let mut n_scans = 0;
+        while n_scans < p.max_scans {
+            if n_scans == p.max_scans - 1 {
+                stop_sweetening = true;
+            }
+            permutation.shuffle(rng);
+            let mut no_change = true;
+            let pr_explore = if stop_sweetening
+                || p.probability_of_exploration_probability_at_zero >= 1.0
+            {
+                0.0
+            } else {
+                if p.probability_of_exploration_probability_at_zero < 0.0 {
+                    -p.probability_of_exploration_probability_at_zero
+                } else {
+                    if rng.gen_range(0.0, 1.0) <= p.probability_of_exploration_probability_at_zero {
+                        0.0
+                    } else {
+                        probability_of_exploration_distribution.sample(rng).min(1.0)
+                    }
+                }
+            };
+            for i in 0..p.n_items {
+                ensure_empty_subset(&mut partition, &mut computer, p.max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = computer.remove(&mut partition, ii);
                 let subset_index =
@@ -752,27 +757,16 @@ pub fn minimize_once_by_salso<'a, T: Rng>(
 }
 
 pub fn minimize_by_salso<'a, T: Rng>(
-    n_items: usize,
     pdi: PartitionDistributionInformation,
     loss_function: LossFunction,
-    max_size: usize,
-    max_scans: u32,
-    batch_size: u32,
-    probability_of_exploration_probability_at_zero: f64,
-    probability_of_exploration_shape: f64,
-    probability_of_exploration_rate: f64,
+    p: SALSOParameters,
     seconds: u64,
     nanoseconds: u32,
     parallel: bool,
     mut rng: &mut T,
 ) -> ((Vec<usize>, f64, u32, f64, u32), bool) {
-    let max_label = if max_size == 0 {
-        usize::max_value()
-    } else {
-        max_size - 1
-    };
     let cache = Log2Cache::new(if let LossFunction::VI = loss_function {
-        n_items
+        p.n_items
     } else {
         0
     });
@@ -802,21 +796,14 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
                 }
             };
-            minimize_once_by_salso(
-                computer_factory,
-                n_items,
-                max_label,
-                max_scans,
-                batch_size,
-                probability_of_exploration_probability_at_zero,
-                probability_of_exploration_shape,
-                probability_of_exploration_rate,
-                rng,
-            )
+            minimize_once_by_salso(computer_factory, p, rng)
         } else {
             let (tx, rx) = mpsc::channel();
             let n_cores = num_cpus::get() as u32;
-            let n_permutations = (batch_size + n_cores - 1) / n_cores;
+            let p = SALSOParameters {
+                n_permutations: (p.n_permutations + n_cores - 1) / n_cores,
+                ..p
+            };
             let cache_ref = &cache;
             crossbeam::scope(|s| {
                 for _ in 0..n_cores {
@@ -841,24 +828,14 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                     Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
                                 }
                             };
-                        let result = minimize_once_by_salso(
-                            computer_factory,
-                            n_items,
-                            max_label,
-                            max_scans,
-                            n_permutations,
-                            probability_of_exploration_probability_at_zero,
-                            probability_of_exploration_shape,
-                            probability_of_exploration_rate,
-                            &mut child_rng,
-                        );
+                        let result = minimize_once_by_salso(computer_factory, p, &mut child_rng);
                         tx.send(result).unwrap();
                     });
                 }
             })
             .unwrap();
             std::mem::drop(tx); // Because of the cloning in the loop.
-            let mut working_best = (vec![0usize; n_items], std::f64::INFINITY, 0, 0.0, 0);
+            let mut working_best = (vec![0usize; p.n_items], std::f64::INFINITY, 0, 0.0, 0);
             let mut permutations_counter = 0;
             for candidate in rx {
                 permutations_counter += candidate.4;
@@ -928,16 +905,19 @@ mod tests_optimize {
         let n_items = 5;
         let mut psm = SquareMatrix::identity(n_items);
         let psm_view = &psm.view();
-        minimize_by_salso(
+        let p = SALSOParameters {
             n_items,
+            max_label: 2,
+            max_scans: 10,
+            n_permutations: 100,
+            probability_of_exploration_probability_at_zero: 0.5,
+            probability_of_exploration_shape: 0.5,
+            probability_of_exploration_rate: 50.0,
+        };
+        minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
             LossFunction::VIlb,
-            2,
-            10,
-            100,
-            0.5,
-            0.5,
-            50.0,
+            p,
             5,
             0,
             false,
@@ -955,7 +935,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     loss: i32,
     max_size: i32,
     max_scans: i32,
-    batch_size: i32,
+    n_permutations: i32,
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
@@ -978,7 +958,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
     let max_size = usize::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
-    let batch_size = u32::try_from(batch_size).unwrap();
+    let n_permutations = u32::try_from(n_permutations).unwrap();
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
@@ -1002,22 +982,21 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         },
         None => panic!("Unsupported loss method: code = {}", loss),
     };
+    let p = SALSOParameters {
+        n_items,
+        max_label: if max_size == 0 {
+            usize::max_value()
+        } else {
+            max_size - 1
+        },
+        max_scans,
+        n_permutations,
+        probability_of_exploration_probability_at_zero,
+        probability_of_exploration_shape,
+        probability_of_exploration_rate,
+    };
     let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
-        minimize_by_salso(
-            n_items,
-            pdi,
-            loss_function,
-            max_size,
-            max_scans,
-            batch_size,
-            probability_of_exploration_probability_at_zero,
-            probability_of_exploration_shape,
-            probability_of_exploration_rate,
-            secs,
-            nanos,
-            parallel,
-            &mut rng,
-        );
+        minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
     for (i, v) in minimizer.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();
