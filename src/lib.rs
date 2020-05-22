@@ -321,10 +321,6 @@ impl<'a> ConfusionMatrix2<'a> {
     }
 
     fn add_all(&mut self, partition: &ClusterLabels) {
-        //Which is faster?
-        //for item_index in 0..partition.labels.len() {
-        //    self.add_with_index(item_index, partition.labels[item_index]);
-        //}
         for (item_index, label) in partition.labels.iter().enumerate() {
             self.add_with_index(item_index, *label);
         }
