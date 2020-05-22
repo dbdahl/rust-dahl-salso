@@ -752,8 +752,8 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     )
 }
 
-pub fn minimize_by_salso<'a, T: Rng>(
-    pdi: PartitionDistributionInformation<'a>,
+pub fn minimize_by_salso<T: Rng>(
+    pdi: PartitionDistributionInformation,
     loss_function: LossFunction,
     p: SALSOParameters,
     seconds: u64,
