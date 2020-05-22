@@ -1,7 +1,6 @@
 use dahl_partition::*;
 
 use crate::ConfusionMatrix;
-use crate::ConfusionMatrix2;
 use crate::Log2Cache;
 use crate::LossFunction;
 use crate::{standardize_labels, ClusterLabels};
@@ -63,7 +62,7 @@ pub fn binder_multiple(
 // Expectation of one minus adjusted Rand index
 
 pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
-    pub fn n_choose_2_times_2(x: u32) -> f64 {
+    pub fn n_choose_2_times_2(x: usize) -> f64 {
         let x = x as f64;
         x * (x - 1.0)
     }
@@ -87,7 +86,7 @@ pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
     1.0 - sum / (cms.len() as f64)
 }
 
-pub fn omari_single(partition: &Partition, draws: &[Partition]) -> f64 {
+pub fn omari_single(partition: &ClusterLabels, draws: &Vec<ClusterLabels>) -> f64 {
     let cms: Vec<ConfusionMatrix> = draws
         .iter()
         .map(|draw| ConfusionMatrix::filled(partition, draw))
@@ -100,12 +99,12 @@ pub fn omari_multiple(
     draws: &PartitionsHolderBorrower,
     results: &mut [f64],
 ) {
-    let ni = partitions.n_items();
-    assert_eq!(ni, draws.n_items());
-    let partitions2 = partitions.get_all();
-    let draws2 = draws.get_all();
-    for k in 0..partitions2.len() {
-        let vi = omari_single(&partitions2[k], &draws2[..]);
+    let n_items = partitions.n_items();
+    assert_eq!(n_items, draws.n_items());
+    let partitions2 = standardize_labels(partitions.data(), n_items);
+    let draws2 = standardize_labels(draws.data(), n_items);
+    for (k, partition2) in partitions2.iter().enumerate() {
+        let vi = omari_single(partition2, &draws2);
         unsafe { *results.get_unchecked_mut(k) = vi };
     }
 }
@@ -168,17 +167,17 @@ pub fn omariapprox_multiple(
 
 // Expectation of the variation of information
 
-pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix2>, cache: &Log2Cache) -> f64 {
+pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
     let mut sum = 0.0;
     for cm in cms {
         let mut vi = 0.0;
         for k1 in 0..cm.k1() {
-            vi += cache.nlog2n_usize(cm.n1(k1));
+            vi += cache.nlog2n(cm.n1(k1));
         }
         for k2 in 0..cm.k2() {
-            vi += cache.nlog2n_usize(cm.n2(k2));
+            vi += cache.nlog2n(cm.n2(k2));
             for k1 in 0..cm.k1() {
-                vi -= 2.0 * cache.nlog2n_usize(cm.n12(k1, k2));
+                vi -= 2.0 * cache.nlog2n(cm.n12(k1, k2));
             }
         }
         sum += vi / (cm.n() as f64);
@@ -187,9 +186,9 @@ pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix2>, cache: &Log2Cache) -> f64 {
 }
 
 pub fn vi_single(partition: &ClusterLabels, draws: &Vec<ClusterLabels>, cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix2> = draws
+    let cms: Vec<ConfusionMatrix> = draws
         .iter()
-        .map(|draw| ConfusionMatrix2::filled(partition, draw))
+        .map(|draw| ConfusionMatrix::filled(partition, draw))
         .collect();
     vi_single_kernel(&cms, cache)
 }

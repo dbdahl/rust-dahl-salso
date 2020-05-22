@@ -6,7 +6,7 @@ use crate::loss::{
     vilb_expected_loss_constant, vilb_single_kernel,
 };
 use crate::{
-    standardize_labels, ClusterLabels, ConfusionMatrix, ConfusionMatrix2, Log2Cache, LossFunction,
+    standardize_labels, ClusterLabels, ConfusionMatrix, Log2Cache, LossFunction,
     PartitionDistributionInformation,
 };
 use dahl_partition::*;
@@ -150,7 +150,7 @@ pub struct OneMinusARIComputer<'a> {
 }
 
 impl<'a> OneMinusARIComputer<'a> {
-    pub fn new(draws: &'a [Partition]) -> OneMinusARIComputer<'a> {
+    pub fn new(draws: &'a Vec<ClusterLabels>) -> OneMinusARIComputer<'a> {
         let cms: Vec<ConfusionMatrix> = draws
             .iter()
             .map(|draw| ConfusionMatrix::empty(draw))
@@ -358,15 +358,15 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
 // Expectation of the variation of information loss
 
 pub struct VarOfInfoComputer<'a> {
-    cms: Vec<ConfusionMatrix2<'a>>,
+    cms: Vec<ConfusionMatrix<'a>>,
     cache: &'a Log2Cache,
 }
 
 impl<'a> VarOfInfoComputer<'a> {
     pub fn new(draws: &'a Vec<ClusterLabels>, cache: &'a Log2Cache) -> VarOfInfoComputer<'a> {
-        let cms: Vec<ConfusionMatrix2> = draws
+        let cms: Vec<ConfusionMatrix> = draws
             .iter()
-            .map(|draw| ConfusionMatrix2::empty(draw))
+            .map(|draw| ConfusionMatrix::empty(draw))
             .collect();
         VarOfInfoComputer { cms, cache }
     }
@@ -382,19 +382,14 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
         let mut sum = 0.0;
-        sum += (self.cms.len() as f64)
-            * self
-                .cache
-                .nlog2n_difference_usize(self.cms[0].n2(subset_index));
+        sum += (self.cms.len() as f64) * self.cache.nlog2n_difference(self.cms[0].n2(subset_index));
         for cm in &self.cms {
             let subset_index_fixed = cm.fixed_partition.labels[i];
-            sum += self
-                .cache
-                .nlog2n_difference_usize(cm.n1(subset_index_fixed));
+            sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
             sum -= 2.0
                 * self
                     .cache
-                    .nlog2n_difference_usize(cm.n12(subset_index_fixed, subset_index))
+                    .nlog2n_difference(cm.n12(subset_index_fixed, subset_index))
         }
         sum
     }
@@ -800,7 +795,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                 }
                 LossFunction::VI => {
                     //
-                    Box::new(|| Box::new(VarOfInfoComputer::new(pdi.draws2(), &cache)))
+                    Box::new(|| Box::new(VarOfInfoComputer::new(pdi.draws(), &cache)))
                 }
                 LossFunction::VIlb => {
                     //
@@ -840,7 +835,7 @@ pub fn minimize_by_salso<'a, T: Rng>(
                                     Box::new(|| Box::new(OneMinusARIapproxComputer::new(pdi.psm())))
                                 }
                                 LossFunction::VI => Box::new(|| {
-                                    Box::new(VarOfInfoComputer::new(pdi.draws2(), cache_ref))
+                                    Box::new(VarOfInfoComputer::new(pdi.draws(), cache_ref))
                                 }),
                                 LossFunction::VIlb => {
                                     Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
@@ -976,8 +971,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
 ) {
     let n_items = usize::try_from(n_items).unwrap();
     let nd = usize::try_from(n_draws).unwrap();
-    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).get_all();
-    let draws2 = standardize_labels(
+    let draws = standardize_labels(
         PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).data(),
         n_items,
     );
@@ -1001,13 +995,9 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
                 loss_function,
                 PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
             ),
-            LossFunction::OneMinusARI => (
+            LossFunction::OneMinusARI | LossFunction::VI => (
                 loss_function,
                 PartitionDistributionInformation::Draws(&draws),
-            ),
-            LossFunction::VI => (
-                loss_function,
-                PartitionDistributionInformation::Draws2(&draws2),
             ),
         },
         None => panic!("Unsupported loss method: code = {}", loss),
