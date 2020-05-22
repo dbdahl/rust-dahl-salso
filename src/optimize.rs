@@ -580,11 +580,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 
 // General algorithm
 
-fn ensure_empty_subset<'a>(
-    partition: &mut Partition,
-    computer: &mut Box<dyn Computer + 'a>,
-    max_label: usize,
-) {
+fn ensure_empty_subset<U: Computer>(partition: &mut Partition, computer: &mut U, max_label: usize) {
     match partition.subsets().last() {
         None => computer.new_subset(partition),
         Some(last) => {
@@ -595,9 +591,9 @@ fn ensure_empty_subset<'a>(
     }
 }
 
-fn micro_optimized_allocation<'a, T: Rng>(
+fn micro_optimized_allocation<T: Rng, U: Computer>(
     partition: &mut Partition,
-    computer: &mut Box<dyn Computer + 'a>,
+    computer: &mut U,
     i: usize,
     probability_of_exploration: f64,
     rng: &mut T,
@@ -651,8 +647,8 @@ pub struct SALSOParameters {
     probability_of_exploration_rate: f64,
 }
 
-pub fn minimize_once_by_salso<'a, T: Rng>(
-    computer_factory: Box<dyn Fn() -> Box<dyn Computer + 'a> + 'a>,
+pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
+    computer_factory: Box<dyn Fn() -> U + 'a>,
     p: SALSOParameters,
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
@@ -757,7 +753,7 @@ pub fn minimize_once_by_salso<'a, T: Rng>(
 }
 
 pub fn minimize_by_salso<'a, T: Rng>(
-    pdi: PartitionDistributionInformation,
+    pdi: PartitionDistributionInformation<'a>,
     loss_function: LossFunction,
     p: SALSOParameters,
     seconds: u64,
@@ -774,29 +770,29 @@ pub fn minimize_by_salso<'a, T: Rng>(
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
     loop {
         let result = if !parallel {
-            let computer_factory: Box<dyn Fn() -> Box<dyn Computer>> = match loss_function {
+            match loss_function {
                 LossFunction::Binder => {
-                    //
-                    Box::new(|| Box::new(BinderComputer::new(pdi.psm())))
+                    minimize_once_by_salso(Box::new(|| BinderComputer::new(pdi.psm())), p, rng)
                 }
-                LossFunction::OneMinusARI => {
-                    //
-                    Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws())))
-                }
-                LossFunction::OneMinusARIapprox => {
-                    //
-                    Box::new(|| Box::new(OneMinusARIapproxComputer::new(pdi.psm())))
-                }
-                LossFunction::VI => {
-                    //
-                    Box::new(|| Box::new(VarOfInfoComputer::new(pdi.draws(), &cache)))
-                }
+                LossFunction::OneMinusARI => minimize_once_by_salso(
+                    Box::new(|| OneMinusARIComputer::new(pdi.draws())),
+                    p,
+                    rng,
+                ),
+                LossFunction::OneMinusARIapprox => minimize_once_by_salso(
+                    Box::new(|| OneMinusARIapproxComputer::new(pdi.psm())),
+                    p,
+                    rng,
+                ),
+                LossFunction::VI => minimize_once_by_salso(
+                    Box::new(|| VarOfInfoComputer::new(pdi.draws(), &cache)),
+                    p,
+                    rng,
+                ),
                 LossFunction::VIlb => {
-                    //
-                    Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
+                    minimize_once_by_salso(Box::new(|| VarOfInfoLBComputer::new(pdi.psm())), p, rng)
                 }
-            };
-            minimize_once_by_salso(computer_factory, p, rng)
+            }
         } else {
             let (tx, rx) = mpsc::channel();
             let n_cores = num_cpus::get() as u32;
@@ -810,25 +806,33 @@ pub fn minimize_by_salso<'a, T: Rng>(
                     let tx = mpsc::Sender::clone(&tx);
                     let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                     s.spawn(move |_| {
-                        let computer_factory: Box<dyn Fn() -> Box<dyn Computer>> =
-                            match loss_function {
-                                LossFunction::Binder => {
-                                    Box::new(|| Box::new(BinderComputer::new(pdi.psm())))
-                                }
-                                LossFunction::OneMinusARI => {
-                                    Box::new(|| Box::new(OneMinusARIComputer::new(pdi.draws())))
-                                }
-                                LossFunction::OneMinusARIapprox => {
-                                    Box::new(|| Box::new(OneMinusARIapproxComputer::new(pdi.psm())))
-                                }
-                                LossFunction::VI => Box::new(|| {
-                                    Box::new(VarOfInfoComputer::new(pdi.draws(), cache_ref))
-                                }),
-                                LossFunction::VIlb => {
-                                    Box::new(|| Box::new(VarOfInfoLBComputer::new(pdi.psm())))
-                                }
-                            };
-                        let result = minimize_once_by_salso(computer_factory, p, &mut child_rng);
+                        let result = match loss_function {
+                            LossFunction::Binder => minimize_once_by_salso(
+                                Box::new(|| BinderComputer::new(pdi.psm())),
+                                p,
+                                &mut child_rng,
+                            ),
+                            LossFunction::OneMinusARI => minimize_once_by_salso(
+                                Box::new(|| OneMinusARIComputer::new(pdi.draws())),
+                                p,
+                                &mut child_rng,
+                            ),
+                            LossFunction::OneMinusARIapprox => minimize_once_by_salso(
+                                Box::new(|| OneMinusARIapproxComputer::new(pdi.psm())),
+                                p,
+                                &mut child_rng,
+                            ),
+                            LossFunction::VI => minimize_once_by_salso(
+                                Box::new(|| VarOfInfoComputer::new(pdi.draws(), cache_ref)),
+                                p,
+                                &mut child_rng,
+                            ),
+                            LossFunction::VIlb => minimize_once_by_salso(
+                                Box::new(|| VarOfInfoLBComputer::new(pdi.psm())),
+                                p,
+                                &mut child_rng,
+                            ),
+                        };
                         tx.send(result).unwrap();
                     });
                 }
