@@ -56,7 +56,6 @@ pub trait Computer {
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize);
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize;
     fn expected_loss_kernel(&self) -> f64;
-    fn expected_loss_from_kernel(&self, kernel: f64) -> f64;
 }
 
 // Expectation of the Binder loss
@@ -78,6 +77,10 @@ impl<'a> BinderComputer<'a> {
             subsets: Vec::new(),
             psm,
         }
+    }
+    fn expected_loss_from_kernel(psm: &'a SquareMatrixBorrower<'a>, kernel: f64) -> f64 {
+        let nif = psm.n_items() as f64;
+        (2.0 * kernel + psm.sum_of_triangle()) * 2.0 / (nif * nif)
     }
 }
 
@@ -129,11 +132,6 @@ impl<'a> Computer for BinderComputer<'a> {
         self.subsets
             .iter()
             .fold(0.0, |s, subset| s + subset.committed_loss)
-    }
-
-    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (2.0 * kernel + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
     }
 }
 
@@ -194,10 +192,6 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
 
     fn expected_loss_kernel(&self) -> f64 {
         omari_single_kernel(&self.cms)
-    }
-
-    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
-        kernel
     }
 }
 
@@ -335,10 +329,6 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
     fn expected_loss_kernel(&self) -> f64 {
         self.engine(0, 0.0, 0.0, 0.0)
     }
-
-    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
-        kernel
-    }
 }
 
 // Expectation of the variation of information loss
@@ -403,10 +393,6 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     fn expected_loss_kernel(&self) -> f64 {
         vi_single_kernel(&self.cms, self.cache)
     }
-
-    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
-        kernel
-    }
 }
 
 // Lower bound of the expectation of variation of information loss
@@ -438,6 +424,10 @@ impl<'a> VarOfInfoLBComputer<'a> {
             subsets: Vec::new(),
             psm,
         }
+    }
+    pub fn expected_loss_from_kernel(psm: &'a SquareMatrixBorrower<'a>, kernel: f64) -> f64 {
+        let nif = psm.n_items() as f64;
+        (kernel + vilb_expected_loss_constant(psm)) / nif
     }
 }
 
@@ -547,11 +537,6 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
         self.subsets
             .iter()
             .fold(0.0, |s, subset| s + subset.committed_loss)
-    }
-
-    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (kernel + vilb_expected_loss_constant(self.psm)) / nif
     }
 }
 
@@ -719,10 +704,9 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     // Canonicalize the labels
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
-    let loss = computer_factory().expected_loss_from_kernel(global_minimum);
     (
         labels,
-        loss,
+        global_minimum,
         global_n_scans,
         global_pr_explore,
         permutations_counter,
@@ -829,6 +813,15 @@ pub fn minimize_by_salso<T: Rng>(
         };
         if result.1 >= global_best.1 || result.0 == global_best.0 {
             global_best.4 += result.4;
+            global_best.1 = match loss_function {
+                LossFunction::Binder => {
+                    BinderComputer::expected_loss_from_kernel(pdi.psm(), global_best.1)
+                }
+                LossFunction::VIlb => {
+                    VarOfInfoLBComputer::expected_loss_from_kernel(pdi.psm(), global_best.1)
+                }
+                _ => global_best.1,
+            };
             return (global_best, false);
         }
         let previous_count = global_best.4;
