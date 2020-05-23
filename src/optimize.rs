@@ -199,7 +199,7 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        omari_single_kernel(&self.cms)
+        self.expected_loss_unnormalized()
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
@@ -343,7 +343,7 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        self.engine(0, 0.0, 0.0, 0.0)
+        self.expected_loss_unnormalized()
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
@@ -415,7 +415,7 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        vi_single_kernel(&self.cms, self.cache)
+        self.expected_loss_unnormalized()
     }
 
     fn expected_loss_unnormalized(&self) -> f64 {
