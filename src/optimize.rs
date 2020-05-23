@@ -56,8 +56,8 @@ pub trait Computer {
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize);
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize;
     fn expected_loss(&self) -> f64;
-    fn expected_loss_unnormalized(&self) -> f64;
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64;
+    fn expected_loss_kernel(&self) -> f64;
+    fn expected_loss_from_kernel(&self, kernel: f64) -> f64;
 }
 
 // Expectation of the Binder loss
@@ -128,16 +128,16 @@ impl<'a> Computer for BinderComputer<'a> {
 
     fn expected_loss(&self) -> f64 {
         let nif = self.psm.n_items() as f64;
-        (2.0 * self.expected_loss_unnormalized() + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
+        (2.0 * self.expected_loss_kernel() + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
     }
 
-    fn expected_loss_unnormalized(&self) -> f64 {
+    fn expected_loss_kernel(&self) -> f64 {
         self.subsets
             .iter()
             .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
         let nif = self.psm.n_items() as f64;
         (2.0 * kernel + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
     }
@@ -199,14 +199,14 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        self.expected_loss_unnormalized()
+        self.expected_loss_kernel()
     }
 
-    fn expected_loss_unnormalized(&self) -> f64 {
+    fn expected_loss_kernel(&self) -> f64 {
         omari_single_kernel(&self.cms)
     }
 
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
         kernel
     }
 }
@@ -343,14 +343,14 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        self.expected_loss_unnormalized()
+        self.expected_loss_kernel()
     }
 
-    fn expected_loss_unnormalized(&self) -> f64 {
+    fn expected_loss_kernel(&self) -> f64 {
         self.engine(0, 0.0, 0.0, 0.0)
     }
 
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
         kernel
     }
 }
@@ -415,14 +415,14 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     }
 
     fn expected_loss(&self) -> f64 {
-        self.expected_loss_unnormalized()
+        self.expected_loss_kernel()
     }
 
-    fn expected_loss_unnormalized(&self) -> f64 {
+    fn expected_loss_kernel(&self) -> f64 {
         vi_single_kernel(&self.cms, self.cache)
     }
 
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
         kernel
     }
 }
@@ -563,16 +563,16 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 
     fn expected_loss(&self) -> f64 {
         let nif = self.psm.n_items() as f64;
-        (self.expected_loss_unnormalized() + vilb_expected_loss_constant(self.psm)) / nif
+        (self.expected_loss_kernel() + vilb_expected_loss_constant(self.psm)) / nif
     }
 
-    fn expected_loss_unnormalized(&self) -> f64 {
+    fn expected_loss_kernel(&self) -> f64 {
         self.subsets
             .iter()
             .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
-    fn final_loss_from_kernel(&self, kernel: f64) -> f64 {
+    fn expected_loss_from_kernel(&self, kernel: f64) -> f64 {
         let nif = self.psm.n_items() as f64;
         (kernel + vilb_expected_loss_constant(self.psm)) / nif
     }
@@ -730,7 +730,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
                 }
             }
         }
-        let value = computer.expected_loss_unnormalized();
+        let value = computer.expected_loss_kernel();
         if value < global_minimum {
             global_minimum = value;
             global_best = partition;
@@ -742,7 +742,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     // Canonicalize the labels
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
-    let loss = computer_factory().final_loss_from_kernel(global_minimum);
+    let loss = computer_factory().expected_loss_from_kernel(global_minimum);
     (
         labels,
         loss,
