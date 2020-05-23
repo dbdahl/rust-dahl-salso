@@ -55,7 +55,6 @@ pub trait Computer {
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64;
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize);
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize;
-    fn expected_loss(&self) -> f64;
     fn expected_loss_kernel(&self) -> f64;
     fn expected_loss_from_kernel(&self, kernel: f64) -> f64;
 }
@@ -126,11 +125,6 @@ impl<'a> Computer for BinderComputer<'a> {
         subset_index
     }
 
-    fn expected_loss(&self) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (2.0 * self.expected_loss_kernel() + self.psm.sum_of_triangle()) * 2.0 / (nif * nif)
-    }
-
     fn expected_loss_kernel(&self) -> f64 {
         self.subsets
             .iter()
@@ -196,10 +190,6 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
             }
         });
         subset_index
-    }
-
-    fn expected_loss(&self) -> f64 {
-        self.expected_loss_kernel()
     }
 
     fn expected_loss_kernel(&self) -> f64 {
@@ -342,10 +332,6 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
         subset_index
     }
 
-    fn expected_loss(&self) -> f64 {
-        self.expected_loss_kernel()
-    }
-
     fn expected_loss_kernel(&self) -> f64 {
         self.engine(0, 0.0, 0.0, 0.0)
     }
@@ -412,10 +398,6 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
             }
         });
         subset_index
-    }
-
-    fn expected_loss(&self) -> f64 {
-        self.expected_loss_kernel()
     }
 
     fn expected_loss_kernel(&self) -> f64 {
@@ -559,11 +541,6 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             assert_eq!(moved_subset_index, self.subsets.len());
         });
         subset_index
-    }
-
-    fn expected_loss(&self) -> f64 {
-        let nif = self.psm.n_items() as f64;
-        (self.expected_loss_kernel() + vilb_expected_loss_constant(self.psm)) / nif
     }
 
     fn expected_loss_kernel(&self) -> f64 {
