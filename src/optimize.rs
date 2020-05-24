@@ -58,6 +58,48 @@ pub trait Computer {
     fn expected_loss_kernel(&self) -> f64;
 }
 
+pub struct ConfusionMatrices<'a> {
+    vec: Vec<ConfusionMatrix<'a>>,
+}
+
+impl<'a> ConfusionMatrices<'a> {
+    fn from_draws(draws: &'a Vec<ClusterLabels>) -> Self {
+        Self {
+            vec: draws
+                .iter()
+                .map(|draw| ConfusionMatrix::empty(draw))
+                .collect(),
+        }
+    }
+
+    fn new_subset(&mut self, partition: &mut Partition) {
+        partition.new_subset();
+        for cm in &mut self.vec {
+            cm.new_subset();
+        }
+    }
+
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+        partition.add_with_index(i, subset_index);
+        for cm in &mut self.vec {
+            cm.add_with_index(i, subset_index);
+        }
+    }
+
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+        let subset_index = partition.label_of(i).unwrap();
+        for cm in &mut self.vec {
+            cm.remove_with_index(i, subset_index);
+        }
+        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
+            for cm in &mut self.vec {
+                cm.swap_remove(killed_subset_index, moved_subset_index);
+            }
+        });
+        subset_index
+    }
+}
+
 // Expectation of the Binder loss
 
 #[derive(Debug)]
@@ -138,60 +180,43 @@ impl<'a> Computer for BinderComputer<'a> {
 // Expectation of the one minus adjusted Rand index loss
 
 pub struct OneMinusARIComputer<'a> {
-    cms: Vec<ConfusionMatrix<'a>>,
+    cms: ConfusionMatrices<'a>,
 }
 
 impl<'a> OneMinusARIComputer<'a> {
     pub fn new(draws: &'a Vec<ClusterLabels>) -> OneMinusARIComputer<'a> {
-        let cms: Vec<ConfusionMatrix> = draws
-            .iter()
-            .map(|draw| ConfusionMatrix::empty(draw))
-            .collect();
-        OneMinusARIComputer { cms }
+        OneMinusARIComputer {
+            cms: ConfusionMatrices::from_draws(draws),
+        }
     }
 }
 
 impl<'a> Computer for OneMinusARIComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        for cm in &mut self.cms {
-            cm.new_subset();
-        }
+        self.cms.new_subset(partition)
     }
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        for cm in &mut self.cms {
+        for cm in &mut self.cms.vec {
             cm.add_with_index(i, subset_index);
         }
-        let result = omari_single_kernel(&self.cms);
-        for cm in &mut self.cms {
+        let result = omari_single_kernel(&self.cms.vec);
+        for cm in &mut self.cms.vec {
             cm.remove_with_index(i, subset_index);
         }
         result
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        partition.add_with_index(i, subset_index);
-        for cm in &mut self.cms {
-            cm.add_with_index(i, subset_index);
-        }
+        self.cms.add_with_index(partition, i, subset_index)
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
-        let subset_index = partition.label_of(i).unwrap();
-        for cm in &mut self.cms {
-            cm.remove_with_index(i, subset_index);
-        }
-        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            for cm in &mut self.cms {
-                cm.swap_remove(killed_subset_index, moved_subset_index);
-            }
-        });
-        subset_index
+        self.cms.remove(partition, i)
     }
 
     fn expected_loss_kernel(&self) -> f64 {
-        omari_single_kernel(&self.cms)
+        omari_single_kernel(&self.cms.vec)
     }
 }
 
@@ -334,32 +359,31 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
 // Expectation of the variation of information loss
 
 pub struct VarOfInfoComputer<'a> {
-    cms: Vec<ConfusionMatrix<'a>>,
+    cms: ConfusionMatrices<'a>,
     cache: &'a Log2Cache,
 }
 
 impl<'a> VarOfInfoComputer<'a> {
     pub fn new(draws: &'a Vec<ClusterLabels>, cache: &'a Log2Cache) -> VarOfInfoComputer<'a> {
-        let cms: Vec<ConfusionMatrix> = draws
-            .iter()
-            .map(|draw| ConfusionMatrix::empty(draw))
-            .collect();
-        VarOfInfoComputer { cms, cache }
+        VarOfInfoComputer {
+            cms: ConfusionMatrices::from_draws(draws),
+            cache,
+        }
     }
 }
 
 impl<'a> Computer for VarOfInfoComputer<'a> {
     fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        for cm in &mut self.cms {
-            cm.new_subset();
-        }
+        self.cms.new_subset(partition);
     }
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
         let mut sum = 0.0;
-        sum += (self.cms.len() as f64) * self.cache.nlog2n_difference(self.cms[0].n2(subset_index));
-        for cm in &self.cms {
+        sum += (self.cms.vec.len() as f64)
+            * self
+                .cache
+                .nlog2n_difference(self.cms.vec[0].n2(subset_index));
+        for cm in &self.cms.vec {
             let subset_index_fixed = cm.fixed_partition.labels[i];
             sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
             sum -= 2.0
@@ -371,27 +395,15 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        partition.add_with_index(i, subset_index);
-        for cm in &mut self.cms {
-            cm.add_with_index(i, subset_index);
-        }
+        self.cms.add_with_index(partition, i, subset_index)
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
-        let subset_index = partition.label_of(i).unwrap();
-        for cm in &mut self.cms {
-            cm.remove_with_index(i, subset_index);
-        }
-        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            for cm in &mut self.cms {
-                cm.swap_remove(killed_subset_index, moved_subset_index);
-            }
-        });
-        subset_index
+        self.cms.remove(partition, i)
     }
 
     fn expected_loss_kernel(&self) -> f64 {
-        vi_single_kernel(&self.cms, self.cache)
+        vi_single_kernel(&self.cms.vec, self.cache)
     }
 }
 
