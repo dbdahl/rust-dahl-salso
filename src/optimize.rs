@@ -51,11 +51,11 @@ fn cmp_f64_with_enumeration(a: &(usize, f64), b: &(usize, f64)) -> Ordering {
 }
 
 pub trait Computer {
-    fn new_subset(&mut self, partition: &mut Partition);
+    fn expected_loss_kernel(&self) -> f64;
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64;
+    fn new_subset(&mut self, partition: &mut Partition);
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize);
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize;
-    fn expected_loss_kernel(&self) -> f64;
 }
 
 pub struct ConfusionMatrices<'a> {
@@ -127,12 +127,10 @@ impl<'a> BinderComputer<'a> {
 }
 
 impl<'a> Computer for BinderComputer<'a> {
-    fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        self.subsets.push(BinderSubsetCalculations {
-            committed_loss: 0.0,
-            speculative_loss: 0.0,
-        });
+    fn expected_loss_kernel(&self) -> f64 {
+        self.subsets
+            .iter()
+            .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
@@ -143,6 +141,14 @@ impl<'a> Computer for BinderComputer<'a> {
                 s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
             });
         self.subsets[subset_index].speculative_loss
+    }
+
+    fn new_subset(&mut self, partition: &mut Partition) {
+        partition.new_subset();
+        self.subsets.push(BinderSubsetCalculations {
+            committed_loss: 0.0,
+            speculative_loss: 0.0,
+        });
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
@@ -169,12 +175,6 @@ impl<'a> Computer for BinderComputer<'a> {
         });
         subset_index
     }
-
-    fn expected_loss_kernel(&self) -> f64 {
-        self.subsets
-            .iter()
-            .fold(0.0, |s, subset| s + subset.committed_loss)
-    }
 }
 
 // Expectation of the one minus adjusted Rand index loss
@@ -192,8 +192,8 @@ impl<'a> OneMinusARIComputer<'a> {
 }
 
 impl<'a> Computer for OneMinusARIComputer<'a> {
-    fn new_subset(&mut self, partition: &mut Partition) {
-        self.cms.new_subset(partition)
+    fn expected_loss_kernel(&self) -> f64 {
+        omari_single_kernel(&self.cms.vec)
     }
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
@@ -207,16 +207,16 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
         result
     }
 
+    fn new_subset(&mut self, partition: &mut Partition) {
+        self.cms.new_subset(partition)
+    }
+
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
         self.cms.add_with_index(partition, i, subset_index)
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         self.cms.remove(partition, i)
-    }
-
-    fn expected_loss_kernel(&self) -> f64 {
-        omari_single_kernel(&self.cms.vec)
     }
 }
 
@@ -274,14 +274,8 @@ impl<'a> OneMinusARIapproxComputer<'a> {
 }
 
 impl<'a> Computer for OneMinusARIapproxComputer<'a> {
-    fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        self.subsets.push(OneMinusARIapproxSubsetCalculations {
-            committed_ip: 0.0,
-            committed_i: 0.0,
-            speculative_ip: 0.0,
-            speculative_i: 0.0,
-        });
+    fn expected_loss_kernel(&self) -> f64 {
+        self.engine(0, 0.0, 0.0, 0.0)
     }
 
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
@@ -305,6 +299,16 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
             self.subsets[subset_index].speculative_i,
             self.speculative_sum_psm,
         )
+    }
+
+    fn new_subset(&mut self, partition: &mut Partition) {
+        partition.new_subset();
+        self.subsets.push(OneMinusARIapproxSubsetCalculations {
+            committed_ip: 0.0,
+            committed_i: 0.0,
+            speculative_ip: 0.0,
+            speculative_i: 0.0,
+        });
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
@@ -350,10 +354,6 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
         });
         subset_index
     }
-
-    fn expected_loss_kernel(&self) -> f64 {
-        self.engine(0, 0.0, 0.0, 0.0)
-    }
 }
 
 // Expectation of the variation of information loss
@@ -373,8 +373,8 @@ impl<'a> VarOfInfoComputer<'a> {
 }
 
 impl<'a> Computer for VarOfInfoComputer<'a> {
-    fn new_subset(&mut self, partition: &mut Partition) {
-        self.cms.new_subset(partition);
+    fn expected_loss_kernel(&self) -> f64 {
+        vi_single_kernel(&self.cms.vec, self.cache)
     }
 
     fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
@@ -394,16 +394,16 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
         sum
     }
 
+    fn new_subset(&mut self, partition: &mut Partition) {
+        self.cms.new_subset(partition);
+    }
+
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
         self.cms.add_with_index(partition, i, subset_index)
     }
 
     fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
         self.cms.remove(partition, i)
-    }
-
-    fn expected_loss_kernel(&self) -> f64 {
-        vi_single_kernel(&self.cms.vec, self.cache)
     }
 }
 
@@ -444,13 +444,10 @@ impl<'a> VarOfInfoLBComputer<'a> {
 }
 
 impl<'a> Computer for VarOfInfoLBComputer<'a> {
-    fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        self.subsets.push(VarOfInfoLBSubsetCalculations {
-            cached_units: Vec::new(),
-            committed_loss: 0.0,
-            speculative_loss: 0.0,
-        })
+    fn expected_loss_kernel(&self) -> f64 {
+        self.subsets
+            .iter()
+            .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
     fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
@@ -494,6 +491,15 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             .fold(0.0, |s, cu| s + cu.speculative_contribution);
         self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
         self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
+    }
+
+    fn new_subset(&mut self, partition: &mut Partition) {
+        partition.new_subset();
+        self.subsets.push(VarOfInfoLBSubsetCalculations {
+            cached_units: Vec::new(),
+            committed_loss: 0.0,
+            speculative_loss: 0.0,
+        })
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
@@ -543,12 +549,6 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             assert_eq!(moved_subset_index, self.subsets.len());
         });
         subset_index
-    }
-
-    fn expected_loss_kernel(&self) -> f64 {
-        self.subsets
-            .iter()
-            .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 }
 
