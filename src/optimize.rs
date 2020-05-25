@@ -194,17 +194,19 @@ impl<'a> Binder2Computer<'a> {
 impl<'a> Computer for Binder2Computer<'a> {
     fn expected_loss_kernel(&self) -> f64 {
         let mut sum = 0.0;
+        let cm = &self.cms.vec[0];
+        for j in 0..cm.k2() {
+            let n2 = cm.n2(j) as f64;
+            sum += n2 * n2;
+        }
+        sum *= self.cms.vec.len() as f64;
         for cm in &self.cms.vec {
             for i in 0..cm.k1() {
-                let n = cm.n1(i) as f64;
-                sum += n * n;
-            }
-            for j in 0..cm.k2() {
-                let n = cm.n2(j) as f64;
-                sum += n * n;
-                for i in 0..cm.k1() {
-                    let n = cm.n12(i, j) as f64;
-                    sum -= 2.0 * n * n;
+                let n1 = cm.n1(i) as f64;
+                sum += n1 * n1;
+                for j in 0..cm.k2() {
+                    let n12 = cm.n12(i, j) as f64;
+                    sum -= 2.0 * n12 * n12;
                 }
             }
         }
