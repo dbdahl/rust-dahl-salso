@@ -67,17 +67,18 @@ pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
         x * (x - 1.0)
     }
     let mut sum = 0.0;
+    let mut sum2 = 0.0;
+    let cm = &cms[0];
+    for j in 0..cm.k2() {
+        sum2 += n_choose_2_times_2(cm.n2(j));
+    }
     for cm in cms {
         let mut sum1 = 0.0;
-        let mut sum2 = 0.0;
         let mut sum12 = 0.0;
-        for k1 in 0..cm.k1() {
-            sum1 += n_choose_2_times_2(cm.n1(k1));
-        }
-        for k2 in 0..cm.k2() {
-            sum2 += n_choose_2_times_2(cm.n2(k2));
-            for k1 in 0..cm.k1() {
-                sum12 += n_choose_2_times_2(cm.n12(k1, k2));
+        for i in 0..cm.k1() {
+            sum1 += n_choose_2_times_2(cm.n1(i));
+            for j in 0..cm.k2() {
+                sum12 += n_choose_2_times_2(cm.n12(i, j));
             }
         }
         let offset = sum1 * sum2 / n_choose_2_times_2(cms[0].n());
@@ -169,18 +170,20 @@ pub fn omariapprox_multiple(
 
 pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
     let mut sum = 0.0;
+    let mut sum2 = 0.0;
+    let cm = &cms[0];
+    for j in 0..cm.k2() {
+        sum2 += cache.nlog2n(cm.n2(j));
+    }
     for cm in cms {
         let mut vi = 0.0;
-        for k1 in 0..cm.k1() {
-            vi += cache.nlog2n(cm.n1(k1));
-        }
-        for k2 in 0..cm.k2() {
-            vi += cache.nlog2n(cm.n2(k2));
-            for k1 in 0..cm.k1() {
-                vi -= 2.0 * cache.nlog2n(cm.n12(k1, k2));
+        for i in 0..cm.k1() {
+            vi += cache.nlog2n(cm.n1(i));
+            for j in 0..cm.k2() {
+                vi -= 2.0 * cache.nlog2n(cm.n12(i, j));
             }
         }
-        sum += vi / (cm.n() as f64);
+        sum += (vi + sum2) / (cm.n() as f64);
     }
     sum / (cms.len() as f64)
 }
