@@ -895,23 +895,27 @@ pub fn minimize_by_salso<T: Rng>(
             working_best.4 = permutations_counter;
             working_best
         };
-        if result.1 >= global_best.1 || result.0 == global_best.0 {
-            global_best.4 += result.4;
-            global_best.1 = match loss_function {
+        let fix_expected_loss = |kernel: f64| -> f64 {
+            match loss_function {
                 LossFunction::Binder => {
-                    BinderComputer::expected_loss_from_kernel(pdi.psm(), global_best.1)
+                    BinderComputer::expected_loss_from_kernel(pdi.psm(), kernel)
                 }
                 LossFunction::VIlb => {
-                    VarOfInfoLBComputer::expected_loss_from_kernel(pdi.psm(), global_best.1)
+                    VarOfInfoLBComputer::expected_loss_from_kernel(pdi.psm(), kernel)
                 }
-                _ => global_best.1,
-            };
+                _ => kernel,
+            }
+        };
+        if result.1 >= global_best.1 || result.0 == global_best.0 {
+            global_best.4 += result.4;
+            global_best.1 = fix_expected_loss(global_best.1);
             return (global_best, false);
         }
         let previous_count = global_best.4;
         global_best = result;
         global_best.4 += previous_count;
         if std::time::SystemTime::now() > stop_time {
+            global_best.1 = fix_expected_loss(global_best.1);
             return (global_best, true);
         }
     }
