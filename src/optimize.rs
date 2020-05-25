@@ -114,8 +114,8 @@ pub struct BinderComputer<'a> {
 }
 
 impl<'a> BinderComputer<'a> {
-    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> BinderComputer<'a> {
-        BinderComputer {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> Self {
+        Self {
             subsets: Vec::new(),
             psm,
         }
@@ -248,8 +248,8 @@ pub struct OneMinusARIComputer<'a> {
 }
 
 impl<'a> OneMinusARIComputer<'a> {
-    pub fn new(draws: &'a Vec<ClusterLabels>) -> OneMinusARIComputer<'a> {
-        OneMinusARIComputer {
+    pub fn new(draws: &'a Vec<ClusterLabels>) -> Self {
+        Self {
             cms: ConfusionMatrices::from_draws(draws),
         }
     }
@@ -303,8 +303,8 @@ pub struct OneMinusARIapproxComputer<'a> {
 }
 
 impl<'a> OneMinusARIapproxComputer<'a> {
-    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> OneMinusARIapproxComputer<'a> {
-        OneMinusARIapproxComputer {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> Self {
+        Self {
             committed_n_items: 0,
             committed_sum_psm: 0.0,
             speculative_sum_psm: f64::NEG_INFINITY,
@@ -428,8 +428,8 @@ pub struct VarOfInfoComputer<'a> {
 }
 
 impl<'a> VarOfInfoComputer<'a> {
-    pub fn new(draws: &'a Vec<ClusterLabels>, cache: &'a Log2Cache) -> VarOfInfoComputer<'a> {
-        VarOfInfoComputer {
+    pub fn new(draws: &'a Vec<ClusterLabels>, cache: &'a Log2Cache) -> Self {
+        Self {
             cms: ConfusionMatrices::from_draws(draws),
             cache,
         }
@@ -495,8 +495,8 @@ pub struct VarOfInfoLBComputer<'a> {
 }
 
 impl<'a> VarOfInfoLBComputer<'a> {
-    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> VarOfInfoLBComputer<'a> {
-        VarOfInfoLBComputer {
+    pub fn new(psm: &'a SquareMatrixBorrower<'a>) -> Self {
+        Self {
             subsets: Vec::new(),
             psm,
         }
