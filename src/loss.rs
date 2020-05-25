@@ -322,6 +322,7 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let loss_function = LossFunction::from_code(loss);
     match loss_function {
         Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
+        Some(LossFunction::Binder2) => panic!("No implementation for binder2."),
         Some(LossFunction::OneMinusARI) => omari_multiple(&partitions, &draws, results),
         Some(LossFunction::OneMinusARIapprox) => omariapprox_multiple(&partitions, &psm, results),
         Some(LossFunction::VI) => vi_multiple(&partitions, &draws, results),

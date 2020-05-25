@@ -177,6 +177,68 @@ impl<'a> Computer for BinderComputer<'a> {
     }
 }
 
+// Expectation of the Binder loss (alternative implementation)
+
+pub struct Binder2Computer<'a> {
+    cms: ConfusionMatrices<'a>,
+}
+
+impl<'a> Binder2Computer<'a> {
+    pub fn new(draws: &'a Vec<ClusterLabels>) -> Self {
+        Self {
+            cms: ConfusionMatrices::from_draws(draws),
+        }
+    }
+}
+
+impl<'a> Computer for Binder2Computer<'a> {
+    fn expected_loss_kernel(&self) -> f64 {
+        let mut sum = 0.0;
+        for cm in &self.cms.vec {
+            for i in 0..cm.k1() {
+                let n = cm.n1(i) as f64;
+                sum += n * n;
+            }
+            for j in 0..cm.k2() {
+                let n = cm.n2(j) as f64;
+                sum += n * n;
+                for i in 0..cm.k1() {
+                    let n = cm.n12(i, j) as f64;
+                    sum -= 2.0 * n * n;
+                }
+            }
+        }
+        let n = self.cms.vec[0].n() as f64;
+        sum / (self.cms.vec.len() as f64 * n * n)
+    }
+
+    fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
+        let mut sum = 0.0;
+        let n2 = self.cms.vec[0].n2(subset_index) as f64;
+        sum += (self.cms.vec.len() as f64) * ((n2 + 1.0) * (n2 + 1.0) - n2 * n2);
+        for cm in &self.cms.vec {
+            let subset_index_fixed = cm.fixed_partition.labels[i];
+            let n1 = cm.n1(subset_index_fixed) as f64;
+            sum += (n1 + 1.0) * (n1 + 1.0) - n1 * n1;
+            let n12 = cm.n12(subset_index_fixed, subset_index) as f64;
+            sum -= 2.0 * ((n12 + 1.0) * (n12 + 1.0) - n12 * n12);
+        }
+        sum
+    }
+
+    fn new_subset(&mut self, partition: &mut Partition) {
+        self.cms.new_subset(partition)
+    }
+
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+        self.cms.add_with_index(partition, i, subset_index)
+    }
+
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+        self.cms.remove(partition, i)
+    }
+}
+
 // Expectation of the one minus adjusted Rand index loss
 
 pub struct OneMinusARIComputer<'a> {
@@ -747,6 +809,9 @@ pub fn minimize_by_salso<T: Rng>(
                 LossFunction::Binder => {
                     minimize_once_by_salso(Box::new(|| BinderComputer::new(pdi.psm())), p, rng)
                 }
+                LossFunction::Binder2 => {
+                    minimize_once_by_salso(Box::new(|| Binder2Computer::new(pdi.draws())), p, rng)
+                }
                 LossFunction::OneMinusARI => minimize_once_by_salso(
                     Box::new(|| OneMinusARIComputer::new(pdi.draws())),
                     p,
@@ -782,6 +847,11 @@ pub fn minimize_by_salso<T: Rng>(
                         let result = match loss_function {
                             LossFunction::Binder => minimize_once_by_salso(
                                 Box::new(|| BinderComputer::new(pdi.psm())),
+                                p,
+                                &mut child_rng,
+                            ),
+                            LossFunction::Binder2 => minimize_once_by_salso(
+                                Box::new(|| Binder2Computer::new(pdi.draws())),
                                 p,
                                 &mut child_rng,
                             ),
@@ -961,7 +1031,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
                 loss_function,
                 PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
             ),
-            LossFunction::OneMinusARI | LossFunction::VI => (
+            LossFunction::Binder2 | LossFunction::OneMinusARI | LossFunction::VI => (
                 loss_function,
                 PartitionDistributionInformation::Draws(&draws),
             ),
@@ -1006,6 +1076,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     let f = match LossFunction::from_code(loss) {
         Some(loss_function) => match loss_function {
             LossFunction::Binder => binder_single_kernel,
+            LossFunction::Binder2 => panic!("No implementation for binder2."),
             LossFunction::OneMinusARI => panic!("No implementation for omARI."),
             LossFunction::OneMinusARIapprox => omariapprox_single,
             LossFunction::VI => panic!("No implementation for VI."),
