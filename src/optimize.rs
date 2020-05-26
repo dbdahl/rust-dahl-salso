@@ -6,7 +6,7 @@ use crate::loss::{
     vilb_expected_loss_constant, vilb_single_kernel,
 };
 use crate::{
-    standardize_labels, ClusterLabels, ConfusionMatrix, Log2Cache, LossFunction,
+    standardize_labels, ClusterLabels, ConfusionMatrix, LabelType, Log2Cache, LossFunction,
     PartitionDistributionInformation,
 };
 use dahl_partition::*;
@@ -52,10 +52,10 @@ fn cmp_f64_with_enumeration(a: &(usize, f64), b: &(usize, f64)) -> Ordering {
 
 pub trait Computer {
     fn expected_loss_kernel(&self) -> f64;
-    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64;
+    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: LabelType) -> f64;
     fn new_subset(&mut self, partition: &mut Partition);
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize);
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize;
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType);
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType;
 }
 
 pub struct ConfusionMatrices<'a> {
@@ -79,21 +79,24 @@ impl<'a> ConfusionMatrices<'a> {
         }
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        partition.add_with_index(i, subset_index);
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
+        partition.add_with_index(i, subset_index as usize);
         for cm in &mut self.vec {
             cm.add_with_index(i, subset_index);
         }
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
-        let subset_index = partition.label_of(i).unwrap();
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
+        let subset_index = partition.label_of(i).unwrap() as LabelType;
         for cm in &mut self.vec {
             cm.remove_with_index(i, subset_index);
         }
         partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
             for cm in &mut self.vec {
-                cm.swap_remove(killed_subset_index, moved_subset_index);
+                cm.swap_remove(
+                    killed_subset_index as LabelType,
+                    moved_subset_index as LabelType,
+                );
             }
         });
         subset_index
@@ -133,14 +136,15 @@ impl<'a> Computer for BinderComputer<'a> {
             .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
-    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        self.subsets[subset_index].speculative_loss = partition.subsets()[subset_index]
+    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: LabelType) -> f64 {
+        self.subsets[subset_index as usize].speculative_loss = partition.subsets()
+            [subset_index as usize]
             .items()
             .iter()
             .fold(0.0, |s, j| {
                 s + 0.5 - unsafe { *self.psm.get_unchecked((i, *j)) }
             });
-        self.subsets[subset_index].speculative_loss
+        self.subsets[subset_index as usize].speculative_loss
     }
 
     fn new_subset(&mut self, partition: &mut Partition) {
@@ -151,12 +155,13 @@ impl<'a> Computer for BinderComputer<'a> {
         });
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        self.subsets[subset_index].committed_loss += self.subsets[subset_index].speculative_loss;
-        partition.add_with_index(i, subset_index);
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
+        self.subsets[subset_index as usize].committed_loss +=
+            self.subsets[subset_index as usize].speculative_loss;
+        partition.add_with_index(i, subset_index as usize);
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
         let subset_index = partition.label_of(i).unwrap();
         self.subsets[subset_index].committed_loss -= partition.subsets()[subset_index]
             .items()
@@ -173,7 +178,7 @@ impl<'a> Computer for BinderComputer<'a> {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
         });
-        subset_index
+        subset_index as LabelType
     }
 }
 
@@ -214,7 +219,12 @@ impl<'a> Computer for Binder2Computer<'a> {
         sum / (self.cms.vec.len() as f64 * n * n)
     }
 
-    fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
+    fn speculative_add(
+        &mut self,
+        _partition: &Partition,
+        i: usize,
+        subset_index: LabelType,
+    ) -> f64 {
         let mut sum = 0.0;
         let n2 = self.cms.vec[0].n2(subset_index) as f64;
         sum += (self.cms.vec.len() as f64) * ((n2 + 1.0) * (n2 + 1.0) - n2 * n2);
@@ -232,11 +242,11 @@ impl<'a> Computer for Binder2Computer<'a> {
         self.cms.new_subset(partition)
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
         self.cms.add_with_index(partition, i, subset_index)
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
         self.cms.remove(partition, i)
     }
 }
@@ -260,7 +270,12 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
         omari_single_kernel(&self.cms.vec)
     }
 
-    fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
+    fn speculative_add(
+        &mut self,
+        _partition: &Partition,
+        i: usize,
+        subset_index: LabelType,
+    ) -> f64 {
         for cm in &mut self.cms.vec {
             cm.add_with_index(i, subset_index);
         }
@@ -275,11 +290,11 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
         self.cms.new_subset(partition)
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
         self.cms.add_with_index(partition, i, subset_index)
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
         self.cms.remove(partition, i)
     }
 }
@@ -342,13 +357,13 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
         self.engine(0, 0.0, 0.0, 0.0)
     }
 
-    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        let s = &partition.subsets()[subset_index];
-        self.subsets[subset_index].speculative_ip = s
+    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: LabelType) -> f64 {
+        let s = &partition.subsets()[subset_index as usize];
+        self.subsets[subset_index as usize].speculative_ip = s
             .items()
             .iter()
             .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) });
-        self.subsets[subset_index].speculative_i = s.n_items() as f64;
+        self.subsets[subset_index as usize].speculative_i = s.n_items() as f64;
         if self.speculative_sum_psm == f64::NEG_INFINITY {
             self.speculative_sum_psm = partition.subsets().iter().fold(0.0, |s, subset| {
                 // We use the NEG_INFINITY flag to see if we need to do the computation.
@@ -359,8 +374,8 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
         }
         self.engine(
             1,
-            self.subsets[subset_index].speculative_ip,
-            self.subsets[subset_index].speculative_i,
+            self.subsets[subset_index as usize].speculative_ip,
+            self.subsets[subset_index as usize].speculative_i,
             self.speculative_sum_psm,
         )
     }
@@ -375,17 +390,17 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
         });
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
-        let mut sc = &mut self.subsets[subset_index];
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
+        let mut sc = &mut self.subsets[subset_index as usize];
         sc.committed_ip += sc.speculative_ip;
         sc.committed_i += sc.speculative_i;
         self.committed_n_items += 1;
         self.committed_sum_psm += self.speculative_sum_psm;
         self.speculative_sum_psm = f64::NEG_INFINITY;
-        partition.add_with_index(i, subset_index);
+        partition.add_with_index(i, subset_index as usize);
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
         let subset_index = partition.label_of(i).unwrap();
         self.subsets[subset_index].committed_ip -= partition.subsets()[subset_index]
             .items()
@@ -416,7 +431,7 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
         });
-        subset_index
+        subset_index as LabelType
     }
 }
 
@@ -441,7 +456,12 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
         vi_single_kernel(&self.cms.vec, self.cache)
     }
 
-    fn speculative_add(&mut self, _partition: &Partition, i: usize, subset_index: usize) -> f64 {
+    fn speculative_add(
+        &mut self,
+        _partition: &Partition,
+        i: usize,
+        subset_index: LabelType,
+    ) -> f64 {
         let mut sum = 0.0;
         sum += (self.cms.vec.len() as f64)
             * self
@@ -453,7 +473,7 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
             sum -= 2.0
                 * self
                     .cache
-                    .nlog2n_difference(cm.n12(subset_index_fixed, subset_index))
+                    .nlog2n_difference(cm.n12(subset_index_fixed, subset_index));
         }
         sum
     }
@@ -462,11 +482,11 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
         self.cms.new_subset(partition);
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
         self.cms.add_with_index(partition, i, subset_index)
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
         self.cms.remove(partition, i)
     }
 }
@@ -514,10 +534,10 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             .fold(0.0, |s, subset| s + subset.committed_loss)
     }
 
-    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: usize) -> f64 {
-        let subset_of_partition = &partition.subsets()[subset_index];
+    fn speculative_add(&mut self, partition: &Partition, i: usize, subset_index: LabelType) -> f64 {
+        let subset_of_partition = &partition.subsets()[subset_index as usize];
         if subset_of_partition.n_items() == 0 {
-            self.subsets[subset_index]
+            self.subsets[subset_index as usize]
                 .cached_units
                 .push(VarOfInfoLBCacheUnit {
                     item: i,
@@ -528,7 +548,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
                 });
             return 0.0;
         }
-        for cu in self.subsets[subset_index].cached_units.iter_mut() {
+        for cu in self.subsets[subset_index as usize].cached_units.iter_mut() {
             cu.speculative_sum =
                 cu.committed_sum + unsafe { *self.psm.get_unchecked((cu.item, i)) };
             cu.speculative_contribution = cu.speculative_sum.log2();
@@ -538,7 +558,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             .iter()
             .fold(0.0, |s, j| s + unsafe { *self.psm.get_unchecked((i, *j)) })
             + 1.0; // Because self.psm[(i, i)] == 1;
-        self.subsets[subset_index]
+        self.subsets[subset_index as usize]
             .cached_units
             .push(VarOfInfoLBCacheUnit {
                 item: i,
@@ -549,12 +569,13 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             });
         let nif = subset_of_partition.n_items() as f64;
         let s1 = (nif + 1.0) * (nif + 1.0).log2();
-        let s2 = self.subsets[subset_index]
+        let s2 = self.subsets[subset_index as usize]
             .cached_units
             .iter()
             .fold(0.0, |s, cu| s + cu.speculative_contribution);
-        self.subsets[subset_index].speculative_loss = s1 - 2.0 * s2;
-        self.subsets[subset_index].speculative_loss - self.subsets[subset_index].committed_loss
+        self.subsets[subset_index as usize].speculative_loss = s1 - 2.0 * s2;
+        self.subsets[subset_index as usize].speculative_loss
+            - self.subsets[subset_index as usize].committed_loss
     }
 
     fn new_subset(&mut self, partition: &mut Partition) {
@@ -566,9 +587,9 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
         })
     }
 
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: usize) {
+    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
         for (index, subset) in self.subsets.iter_mut().enumerate() {
-            if index == subset_index {
+            if index == (subset_index as usize) {
                 for cu in subset.cached_units.iter_mut() {
                     cu.committed_sum = cu.speculative_sum;
                     cu.committed_contribution = cu.speculative_contribution;
@@ -577,11 +598,12 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
                 subset.cached_units.pop();
             }
         }
-        self.subsets[subset_index].committed_loss = self.subsets[subset_index].speculative_loss;
-        partition.add_with_index(i, subset_index);
+        self.subsets[subset_index as usize].committed_loss =
+            self.subsets[subset_index as usize].speculative_loss;
+        partition.add_with_index(i, subset_index as usize);
     }
 
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> usize {
+    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
         let subset_index = partition.label_of(i).unwrap();
         for cu in self.subsets[subset_index].cached_units.iter_mut() {
             cu.committed_sum -= unsafe { *self.psm.get_unchecked((cu.item, i)) };
@@ -612,17 +634,21 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
             self.subsets.swap_remove(killed_subset_index);
             assert_eq!(moved_subset_index, self.subsets.len());
         });
-        subset_index
+        subset_index as LabelType
     }
 }
 
 // General algorithm
 
-fn ensure_empty_subset<U: Computer>(partition: &mut Partition, computer: &mut U, max_label: usize) {
+fn ensure_empty_subset<U: Computer>(
+    partition: &mut Partition,
+    computer: &mut U,
+    max_label: LabelType,
+) {
     match partition.subsets().last() {
         None => computer.new_subset(partition),
         Some(last) => {
-            if !last.is_empty() && partition.n_subsets() <= max_label {
+            if !last.is_empty() && partition.n_subsets() <= max_label as usize {
                 computer.new_subset(partition)
             }
         }
@@ -635,10 +661,10 @@ fn micro_optimized_allocation<T: Rng, U: Computer>(
     i: usize,
     probability_of_exploration: f64,
     rng: &mut T,
-) -> usize {
+) -> LabelType {
     let max_label = partition.n_subsets() - 1;
     let mut iter = (0..=max_label)
-        .map(|subset_index| computer.speculative_add(partition, i, subset_index))
+        .map(|subset_index| computer.speculative_add(partition, i, subset_index as LabelType))
         .enumerate();
     let take_best = if probability_of_exploration > 0.0 {
         rng.gen_range(0.0, 1.0) >= probability_of_exploration
@@ -670,14 +696,14 @@ fn micro_optimized_allocation<T: Rng, U: Computer>(
             second_best.0
         }
     };
-    computer.add_with_index(partition, i, subset_index);
-    subset_index
+    computer.add_with_index(partition, i, subset_index as LabelType);
+    subset_index as LabelType
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct SALSOParameters {
     n_items: usize,
-    max_label: usize,
+    max_label: LabelType,
     max_scans: u32,
     n_permutations: u32,
     probability_of_exploration_probability_at_zero: f64,
@@ -1018,7 +1044,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_items,
     );
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
-    let max_size = usize::try_from(max_size).unwrap();
+    let max_size = LabelType::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let n_permutations = u32::try_from(n_permutations).unwrap();
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
@@ -1047,7 +1073,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let p = SALSOParameters {
         n_items,
         max_label: if max_size == 0 {
-            usize::max_value()
+            LabelType::max_value()
         } else {
             max_size - 1
         },

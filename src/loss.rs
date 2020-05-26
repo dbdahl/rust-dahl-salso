@@ -1,6 +1,7 @@
 use dahl_partition::*;
 
 use crate::ConfusionMatrix;
+use crate::CountType;
 use crate::Log2Cache;
 use crate::LossFunction;
 use crate::{standardize_labels, ClusterLabels};
@@ -62,7 +63,7 @@ pub fn binder_multiple(
 // Expectation of one minus adjusted Rand index
 
 pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
-    pub fn n_choose_2_times_2(x: usize) -> f64 {
+    pub fn n_choose_2_times_2(x: CountType) -> f64 {
         let x = x as f64;
         x * (x - 1.0)
     }

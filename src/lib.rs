@@ -11,6 +11,12 @@ pub mod psm;
 use dahl_partition::*;
 use std::collections::HashMap;
 
+//type LabelType = usize;
+//type CountType = usize;
+
+type LabelType = u16;
+type CountType = u32;
+
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
     Draws(&'a Vec<ClusterLabels>),
@@ -85,37 +91,38 @@ impl Log2Cache {
         }
     }
 
-    pub fn plog2p(&self, x: usize, n: usize) -> f64 {
+    pub fn plog2p(&self, x: CountType, n: CountType) -> f64 {
         let p = (x as f64) / (n as f64);
-        let log2p = self.log2n[x] - self.log2n[n];
+        let log2p = self.log2n[x as usize] - self.log2n[n as usize];
         p * log2p
     }
 
-    pub fn nlog2n(&self, n: usize) -> f64 {
-        self.nlog2n[n]
+    pub fn nlog2n(&self, n: CountType) -> f64 {
+        self.nlog2n[n as usize]
     }
 
-    pub fn nlog2n_difference(&self, x: usize) -> f64 {
-        self.nlog2n_difference[x]
+    pub fn nlog2n_difference(&self, x: CountType) -> f64 {
+        self.nlog2n_difference[x as usize]
     }
 }
 
 pub struct ConfusionMatrix<'a> {
-    data: Vec<usize>,
+    data: Vec<CountType>,
     fixed_partition: &'a ClusterLabels,
-    k1_plus_one: usize,
-    k2: usize,
+    k1: LabelType,
+    k2: LabelType,
 }
 
 impl<'a> ConfusionMatrix<'a> {
     pub fn empty(fixed_partition: &'a ClusterLabels) -> Self {
-        let k1_plus_one = fixed_partition.n_clusters + 1;
+        let k1 = fixed_partition.n_clusters;
         let k2 = 0;
-        let data = Vec::with_capacity(2 * k1_plus_one * k1_plus_one);
+        let capacity = (1.5 * (k1 as f64 + 1.0) * (k1 as f64 + 1.0)) as usize;
+        let data = Vec::with_capacity(capacity);
         let mut x = Self {
             data,
             fixed_partition,
-            k1_plus_one,
+            k1,
             k2,
         };
         x.extend();
@@ -128,51 +135,52 @@ impl<'a> ConfusionMatrix<'a> {
     ) -> Self {
         let n_items = fixed_partition.labels.len();
         assert_eq!(dynamic_partition.labels.len(), n_items);
-        let k1_plus_one = fixed_partition.n_clusters + 1;
+        let k1 = fixed_partition.n_clusters;
         let k2 = dynamic_partition.n_clusters;
+        let capacity = (k1 as usize + 1) * (k2 as usize + 1);
         let mut x = Self {
-            data: vec![0; k1_plus_one * (k2 + 1)],
+            data: vec![0; capacity],
             fixed_partition,
-            k1_plus_one,
+            k1,
             k2,
         };
         x.add_all(dynamic_partition);
         x
     }
 
-    pub fn k1(&self) -> usize {
-        self.k1_plus_one - 1
+    pub fn k1(&self) -> LabelType {
+        self.k1
     }
 
-    pub fn k2(&self) -> usize {
+    pub fn k2(&self) -> LabelType {
         self.k2
     }
 
-    pub fn n(&self) -> usize {
+    pub fn n(&self) -> CountType {
         self.data[0]
     }
 
-    pub fn n1(&self, i: usize) -> usize {
-        self.data[i + 1]
+    pub fn n1(&self, i: LabelType) -> CountType {
+        self.data[i as usize + 1]
     }
 
-    pub fn p1(&self, i: usize) -> f64 {
+    pub fn p1(&self, i: LabelType) -> f64 {
         (self.n1(i) as f64) / (self.n() as f64)
     }
 
-    pub fn n2(&self, j: usize) -> usize {
-        self.data[self.k1_plus_one * (j + 1)]
+    pub fn n2(&self, j: LabelType) -> CountType {
+        self.data[(self.k1 as usize + 1) * (j as usize + 1)]
     }
 
-    pub fn p2(&self, j: usize) -> f64 {
+    pub fn p2(&self, j: LabelType) -> f64 {
         (self.n2(j) as f64) / (self.n() as f64)
     }
 
-    pub fn n12(&self, i: usize, j: usize) -> usize {
-        self.data[self.k1_plus_one * (j + 1) + (i + 1)]
+    pub fn n12(&self, i: LabelType, j: LabelType) -> CountType {
+        self.data[(self.k1 as usize + 1) * (j as usize + 1) + (i as usize + 1)]
     }
 
-    pub fn p12(&self, i: usize, j: usize) -> f64 {
+    pub fn p12(&self, i: LabelType, j: LabelType) -> f64 {
         (self.n12(i, j) as f64) / (self.n() as f64)
     }
 
@@ -182,7 +190,7 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     fn extend(&mut self) {
-        for _ in 0..self.k1_plus_one {
+        for _ in 0..=self.k1 {
             self.data.push(0)
         }
     }
@@ -193,39 +201,40 @@ impl<'a> ConfusionMatrix<'a> {
         }
     }
 
-    fn add_with_index(&mut self, item_index: usize, label: usize) {
+    fn add_with_index(&mut self, item_index: usize, label: LabelType) {
         self.data[0] += 1;
-        let offset = self.k1_plus_one * (label + 1);
+        let offset = (self.k1 as usize + 1) * (label as usize + 1);
         self.data[offset] += 1;
-        let ii_plus_one = self.fixed_partition.labels[item_index] + 1;
+        let ii_plus_one = self.fixed_partition.labels[item_index] as usize + 1;
         self.data[ii_plus_one] += 1;
         self.data[offset + ii_plus_one] += 1;
     }
 
-    fn remove_with_index(&mut self, item_index: usize, label: usize) {
+    fn remove_with_index(&mut self, item_index: usize, label: LabelType) {
         self.data[0] -= 1;
-        let offset = self.k1_plus_one * (label + 1);
+        let offset = (self.k1 as usize + 1) * (label as usize + 1);
         self.data[offset] -= 1;
-        let ii_plus_one = self.fixed_partition.labels[item_index] + 1;
+        let ii_plus_one = self.fixed_partition.labels[item_index] as usize + 1;
         self.data[ii_plus_one] -= 1;
         self.data[offset + ii_plus_one] -= 1;
     }
 
-    fn swap_remove(&mut self, killed_label: usize, moved_label: usize) {
+    fn swap_remove(&mut self, killed_label: LabelType, moved_label: LabelType) {
         if killed_label != moved_label {
-            for i in 0..self.k1_plus_one {
-                self.data[self.k1_plus_one * (killed_label + 1) + i] =
-                    self.data[self.k1_plus_one * (moved_label + 1) + i]
+            for i in 0..=self.k1 {
+                self.data[(self.k1 as usize + 1) * (killed_label as usize + 1) + i as usize] =
+                    self.data[(self.k1 as usize + 1) * (moved_label as usize + 1) + i as usize]
             }
         }
         self.k2 -= 1;
-        self.data.truncate(self.k1_plus_one * (self.k2 + 1));
+        self.data
+            .truncate((self.k1 as usize + 1) * (self.k2 as usize + 1));
     }
 }
 
 pub struct ClusterLabels {
-    labels: Vec<usize>,
-    n_clusters: usize,
+    labels: Vec<LabelType>,
+    n_clusters: LabelType,
 }
 
 pub fn standardize_labels(labels: &[i32], n_items: usize) -> Vec<ClusterLabels> {
