@@ -6,7 +6,7 @@ use crate::loss::{
     vilb_expected_loss_constant, vilb_single_kernel,
 };
 use crate::{
-    standardize_labels, ClusterLabels, ConfusionMatrix, LabelType, Log2Cache, LossFunction,
+    Clusterings, ConfusionMatrix, LabelType, Log2Cache, LossFunction,
     PartitionDistributionInformation,
 };
 use dahl_partition::*;
@@ -59,17 +59,33 @@ pub trait Computer {
 }
 
 pub struct ConfusionMatrices<'a> {
-    vec: Vec<ConfusionMatrix<'a>>,
+    pub vec: Vec<ConfusionMatrix<'a>>,
 }
 
 impl<'a> ConfusionMatrices<'a> {
-    fn from_draws(draws: &'a Vec<ClusterLabels>) -> Self {
-        Self {
-            vec: draws
-                .iter()
-                .map(|draw| ConfusionMatrix::empty(draw))
-                .collect(),
+    pub fn from_draws_empty(draws: &'a Clusterings) -> Self {
+        let mut vec = Vec::with_capacity(draws.n_draws);
+        for i in 0..draws.n_draws {
+            vec.push(ConfusionMatrix::empty(draws.labels(i), draws.n_clusters(i)));
         }
+        Self { vec }
+    }
+
+    pub fn from_draws_filled(
+        draws: &'a Clusterings,
+        labels: &'a [LabelType],
+        n_clusters: LabelType,
+    ) -> Self {
+        let mut vec = Vec::with_capacity(draws.n_draws);
+        for i in 0..draws.n_draws {
+            vec.push(ConfusionMatrix::filled(
+                labels,
+                n_clusters,
+                draws.labels(i),
+                draws.n_clusters(i),
+            ));
+        }
+        Self { vec }
     }
 
     fn new_subset(&mut self, partition: &mut Partition) {
@@ -189,9 +205,9 @@ pub struct Binder2Computer<'a> {
 }
 
 impl<'a> Binder2Computer<'a> {
-    pub fn new(draws: &'a Vec<ClusterLabels>) -> Self {
+    pub fn new(draws: &'a Clusterings) -> Self {
         Self {
-            cms: ConfusionMatrices::from_draws(draws),
+            cms: ConfusionMatrices::from_draws_empty(draws),
         }
     }
 }
@@ -229,7 +245,7 @@ impl<'a> Computer for Binder2Computer<'a> {
         let n2 = self.cms.vec[0].n2(subset_index) as f64;
         sum += (self.cms.vec.len() as f64) * ((n2 + 1.0) * (n2 + 1.0) - n2 * n2);
         for cm in &self.cms.vec {
-            let subset_index_fixed = cm.fixed_partition.labels[i];
+            let subset_index_fixed = cm.labels[i];
             let n1 = cm.n1(subset_index_fixed) as f64;
             sum += (n1 + 1.0) * (n1 + 1.0) - n1 * n1;
             let n12 = cm.n12(subset_index_fixed, subset_index) as f64;
@@ -258,9 +274,9 @@ pub struct OneMinusARIComputer<'a> {
 }
 
 impl<'a> OneMinusARIComputer<'a> {
-    pub fn new(draws: &'a Vec<ClusterLabels>) -> Self {
+    pub fn new(draws: &'a Clusterings) -> Self {
         Self {
-            cms: ConfusionMatrices::from_draws(draws),
+            cms: ConfusionMatrices::from_draws_empty(draws),
         }
     }
 }
@@ -443,9 +459,9 @@ pub struct VarOfInfoComputer<'a> {
 }
 
 impl<'a> VarOfInfoComputer<'a> {
-    pub fn new(draws: &'a Vec<ClusterLabels>, cache: &'a Log2Cache) -> Self {
+    pub fn new(draws: &'a Clusterings, cache: &'a Log2Cache) -> Self {
         Self {
-            cms: ConfusionMatrices::from_draws(draws),
+            cms: ConfusionMatrices::from_draws_empty(draws),
             cache,
         }
     }
@@ -468,7 +484,7 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
                 .cache
                 .nlog2n_difference(self.cms.vec[0].n2(subset_index));
         for cm in &self.cms.vec {
-            let subset_index_fixed = cm.fixed_partition.labels[i];
+            let subset_index_fixed = cm.labels[i];
             sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
             sum -= 2.0
                 * self
@@ -1039,7 +1055,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
 ) {
     let n_items = usize::try_from(n_items).unwrap();
     let nd = usize::try_from(n_draws).unwrap();
-    let draws = standardize_labels(
+    let draws = Clusterings::from_i32_column_major_order(
         PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).data(),
         n_items,
     );

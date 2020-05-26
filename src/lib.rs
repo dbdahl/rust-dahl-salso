@@ -19,12 +19,12 @@ type CountType = u32;
 
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
-    Draws(&'a Vec<ClusterLabels>),
+    Draws(&'a Clusterings),
     PairwiseSimilarityMatrix(&'a SquareMatrixBorrower<'a>),
 }
 
 impl<'a> PartitionDistributionInformation<'a> {
-    pub fn draws(self) -> &'a Vec<ClusterLabels> {
+    pub fn draws(self) -> &'a Clusterings {
         match self {
             PartitionDistributionInformation::Draws(d) => d,
             _ => panic!("Not available."),
@@ -108,20 +108,20 @@ impl Log2Cache {
 
 pub struct ConfusionMatrix<'a> {
     data: Vec<CountType>,
-    fixed_partition: &'a ClusterLabels,
+    labels: &'a [LabelType],
     k1: LabelType,
     k2: LabelType,
 }
 
 impl<'a> ConfusionMatrix<'a> {
-    pub fn empty(fixed_partition: &'a ClusterLabels) -> Self {
-        let k1 = fixed_partition.n_clusters;
+    pub fn empty(labels: &'a [LabelType], n_clusters: LabelType) -> Self {
+        let k1 = n_clusters;
         let k2 = 0;
         let capacity = (1.5 * (k1 as f64 + 1.0) * (k1 as f64 + 1.0)) as usize;
         let data = Vec::with_capacity(capacity);
         let mut x = Self {
             data,
-            fixed_partition,
+            labels,
             k1,
             k2,
         };
@@ -130,21 +130,23 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn filled(
-        dynamic_partition: &'a ClusterLabels,
-        fixed_partition: &'a ClusterLabels,
+        dynamic_clustering: &'a [LabelType],
+        dynamic_n_clusters: LabelType,
+        fixed_clustering: &'a [LabelType],
+        fixed_n_clusters: LabelType,
     ) -> Self {
-        let n_items = fixed_partition.labels.len();
-        assert_eq!(dynamic_partition.labels.len(), n_items);
-        let k1 = fixed_partition.n_clusters;
-        let k2 = dynamic_partition.n_clusters;
+        let n_items = fixed_clustering.len();
+        assert_eq!(dynamic_clustering.len(), n_items);
+        let k1 = fixed_n_clusters;
+        let k2 = dynamic_n_clusters;
         let capacity = (k1 as usize + 1) * (k2 as usize + 1);
         let mut x = Self {
             data: vec![0; capacity],
-            fixed_partition,
+            labels: fixed_clustering,
             k1,
             k2,
         };
-        x.add_all(dynamic_partition);
+        x.add_all(dynamic_clustering);
         x
     }
 
@@ -195,8 +197,8 @@ impl<'a> ConfusionMatrix<'a> {
         }
     }
 
-    fn add_all(&mut self, partition: &ClusterLabels) {
-        for (item_index, label) in partition.labels.iter().enumerate() {
+    fn add_all(&mut self, clustering: &[LabelType]) {
+        for (item_index, label) in clustering.iter().enumerate() {
             self.add_with_index(item_index, *label);
         }
     }
@@ -205,7 +207,7 @@ impl<'a> ConfusionMatrix<'a> {
         self.data[0] += 1;
         let offset = (self.k1 as usize + 1) * (label as usize + 1);
         self.data[offset] += 1;
-        let ii_plus_one = self.fixed_partition.labels[item_index] as usize + 1;
+        let ii_plus_one = self.labels[item_index] as usize + 1;
         self.data[ii_plus_one] += 1;
         self.data[offset + ii_plus_one] += 1;
     }
@@ -214,7 +216,7 @@ impl<'a> ConfusionMatrix<'a> {
         self.data[0] -= 1;
         let offset = (self.k1 as usize + 1) * (label as usize + 1);
         self.data[offset] -= 1;
-        let ii_plus_one = self.fixed_partition.labels[item_index] as usize + 1;
+        let ii_plus_one = self.labels[item_index] as usize + 1;
         self.data[ii_plus_one] -= 1;
         self.data[offset + ii_plus_one] -= 1;
     }
@@ -232,30 +234,46 @@ impl<'a> ConfusionMatrix<'a> {
     }
 }
 
-pub struct ClusterLabels {
+pub struct Clusterings {
+    n_items: usize,
+    n_draws: usize,
     labels: Vec<LabelType>,
-    n_clusters: LabelType,
+    n_clusters: Vec<LabelType>,
 }
 
-pub fn standardize_labels(labels: &[i32], n_items: usize) -> Vec<ClusterLabels> {
-    let n_samples = labels.len() / n_items;
-    let mut new_labels_collection = Vec::with_capacity(n_samples);
-    for i in 0..n_samples {
-        let mut new_labels = Vec::with_capacity(n_items);
-        let mut map = HashMap::new();
-        let mut next_new_label = 0;
-        for j in 0..n_items {
-            let c = *map.entry(labels[j * n_samples + i]).or_insert_with(|| {
-                let c = next_new_label;
-                next_new_label += 1;
-                c
-            });
-            new_labels.push(c);
+impl Clusterings {
+    pub fn from_i32_column_major_order(original_labels: &[i32], n_items: usize) -> Self {
+        let n_draws = original_labels.len() / n_items;
+        let mut labels = Vec::with_capacity(n_draws * n_items);
+        let mut n_clusters = Vec::with_capacity(n_draws);
+        for i in 0..n_draws {
+            let mut map = HashMap::new();
+            let mut next_new_label = 0;
+            for j in 0..n_items {
+                let c = *map
+                    .entry(original_labels[j * n_draws + i])
+                    .or_insert_with(|| {
+                        let c = next_new_label;
+                        next_new_label += 1;
+                        c
+                    });
+                labels.push(c);
+            }
+            n_clusters.push(next_new_label);
         }
-        new_labels_collection.push(ClusterLabels {
-            labels: new_labels,
-            n_clusters: next_new_label,
-        });
+        Self {
+            n_items,
+            n_draws,
+            labels,
+            n_clusters,
+        }
     }
-    new_labels_collection
+
+    pub fn labels(&self, index: usize) -> &[LabelType] {
+        &self.labels[index * self.n_items..(index + 1) * self.n_items]
+    }
+
+    pub fn n_clusters(&self, index: usize) -> LabelType {
+        self.n_clusters[index]
+    }
 }

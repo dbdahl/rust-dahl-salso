@@ -1,10 +1,10 @@
 use dahl_partition::*;
 
-use crate::ConfusionMatrix;
-use crate::CountType;
+use crate::optimize::ConfusionMatrices;
 use crate::Log2Cache;
 use crate::LossFunction;
-use crate::{standardize_labels, ClusterLabels};
+use crate::{Clusterings, ConfusionMatrix};
+use crate::{CountType, LabelType};
 use std::slice;
 
 // Expectation of Binder loss
@@ -88,12 +88,9 @@ pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
     1.0 - sum / (cms.len() as f64)
 }
 
-pub fn omari_single(partition: &ClusterLabels, draws: &Vec<ClusterLabels>) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::filled(partition, draw))
-        .collect();
-    omari_single_kernel(&cms)
+pub fn omari_single(labels: &[LabelType], n_clusters: LabelType, draws: &Clusterings) -> f64 {
+    let cms = ConfusionMatrices::from_draws_filled(draws, labels, n_clusters);
+    omari_single_kernel(&cms.vec)
 }
 
 pub fn omari_multiple(
@@ -103,11 +100,11 @@ pub fn omari_multiple(
 ) {
     let n_items = partitions.n_items();
     assert_eq!(n_items, draws.n_items());
-    let partitions2 = standardize_labels(partitions.data(), n_items);
-    let draws2 = standardize_labels(draws.data(), n_items);
-    for (k, partition2) in partitions2.iter().enumerate() {
-        let vi = omari_single(partition2, &draws2);
-        unsafe { *results.get_unchecked_mut(k) = vi };
+    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
+    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
+    for k in 0..clusterings.n_draws {
+        let omari = omari_single(clusterings.labels(k), clusterings.n_clusters(k), &draws);
+        unsafe { *results.get_unchecked_mut(k) = omari };
     }
 }
 
@@ -189,12 +186,14 @@ pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
     sum / (cms.len() as f64)
 }
 
-pub fn vi_single(partition: &ClusterLabels, draws: &Vec<ClusterLabels>, cache: &Log2Cache) -> f64 {
-    let cms: Vec<ConfusionMatrix> = draws
-        .iter()
-        .map(|draw| ConfusionMatrix::filled(partition, draw))
-        .collect();
-    vi_single_kernel(&cms, cache)
+pub fn vi_single(
+    labels: &[LabelType],
+    n_clusters: LabelType,
+    draws: &Clusterings,
+    cache: &Log2Cache,
+) -> f64 {
+    let cms = ConfusionMatrices::from_draws_filled(draws, labels, n_clusters);
+    vi_single_kernel(&cms.vec, cache)
 }
 
 pub fn vi_multiple(
@@ -204,11 +203,16 @@ pub fn vi_multiple(
 ) {
     let n_items = partitions.n_items();
     assert_eq!(n_items, draws.n_items());
-    let partitions2 = standardize_labels(partitions.data(), n_items);
-    let draws2 = standardize_labels(draws.data(), n_items);
+    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
+    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
     let cache = Log2Cache::new(n_items);
-    for (k, partition2) in partitions2.iter().enumerate() {
-        let vi = vi_single(partition2, &draws2, &cache);
+    for k in 0..clusterings.n_draws {
+        let vi = vi_single(
+            clusterings.labels(k),
+            clusterings.n_clusters(k),
+            &draws,
+            &cache,
+        );
         unsafe { *results.get_unchecked_mut(k) = vi };
     }
 }
