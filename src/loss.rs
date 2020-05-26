@@ -1,10 +1,6 @@
 use dahl_partition::*;
 
-use crate::optimize::ConfusionMatrices;
-use crate::Log2Cache;
-use crate::LossFunction;
-use crate::{Clusterings, ConfusionMatrix};
-use crate::{CountType, LabelType};
+use crate::*;
 use std::slice;
 
 // Expectation of Binder loss

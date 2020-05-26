@@ -1,14 +1,8 @@
 extern crate num_cpus;
 extern crate rand;
 
-use crate::loss::{
-    binder_single_kernel, omari_single_kernel, omariapprox_single, vi_single_kernel,
-    vilb_expected_loss_constant, vilb_single_kernel,
-};
-use crate::{
-    Clusterings, ConfusionMatrix, LabelType, Log2Cache, LossFunction,
-    PartitionDistributionInformation,
-};
+use crate::loss::*;
+use crate::*;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
@@ -56,67 +50,6 @@ pub trait Computer {
     fn new_subset(&mut self, partition: &mut Partition);
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType);
     fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType;
-}
-
-pub struct ConfusionMatrices<'a> {
-    pub vec: Vec<ConfusionMatrix<'a>>,
-}
-
-impl<'a> ConfusionMatrices<'a> {
-    pub fn from_draws_empty(draws: &'a Clusterings) -> Self {
-        let mut vec = Vec::with_capacity(draws.n_draws);
-        for i in 0..draws.n_draws {
-            vec.push(ConfusionMatrix::empty(draws.labels(i), draws.n_clusters(i)));
-        }
-        Self { vec }
-    }
-
-    pub fn from_draws_filled(
-        draws: &'a Clusterings,
-        labels: &'a [LabelType],
-        n_clusters: LabelType,
-    ) -> Self {
-        let mut vec = Vec::with_capacity(draws.n_draws);
-        for i in 0..draws.n_draws {
-            vec.push(ConfusionMatrix::filled(
-                labels,
-                n_clusters,
-                draws.labels(i),
-                draws.n_clusters(i),
-            ));
-        }
-        Self { vec }
-    }
-
-    fn new_subset(&mut self, partition: &mut Partition) {
-        partition.new_subset();
-        for cm in &mut self.vec {
-            cm.new_subset();
-        }
-    }
-
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
-        partition.add_with_index(i, subset_index as usize);
-        for cm in &mut self.vec {
-            cm.add_with_index(i, subset_index);
-        }
-    }
-
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
-        let subset_index = partition.label_of(i).unwrap() as LabelType;
-        for cm in &mut self.vec {
-            cm.remove_with_index(i, subset_index);
-        }
-        partition.remove_clean_and_relabel(i, |killed_subset_index, moved_subset_index| {
-            for cm in &mut self.vec {
-                cm.swap_remove(
-                    killed_subset_index as LabelType,
-                    moved_subset_index as LabelType,
-                );
-            }
-        });
-        subset_index
-    }
 }
 
 // Expectation of the Binder loss
