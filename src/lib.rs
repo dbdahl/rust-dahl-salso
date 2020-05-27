@@ -11,11 +11,8 @@ pub mod psm;
 use dahl_partition::*;
 use std::collections::HashMap;
 
-//type LabelType = usize;
-//type CountType = usize;
-
-type LabelType = u16;
-type CountType = u32;
+type LabelType = u16; // usize;
+type CountType = u32; // usize;
 
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
@@ -130,23 +127,23 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn filled(
-        dynamic_clustering: &'a [LabelType],
-        dynamic_n_clusters: LabelType,
-        fixed_clustering: &'a [LabelType],
+        fixed_labels: &'a [LabelType],
         fixed_n_clusters: LabelType,
+        dynamic_labels: &'a [LabelType],
+        dynamic_n_clusters: LabelType,
     ) -> Self {
-        let n_items = fixed_clustering.len();
-        assert_eq!(dynamic_clustering.len(), n_items);
+        let n_items = fixed_labels.len();
+        assert_eq!(dynamic_labels.len(), n_items);
         let k1 = fixed_n_clusters;
         let k2 = dynamic_n_clusters;
         let capacity = (k1 as usize + 1) * (k2 as usize + 1);
         let mut x = Self {
             data: vec![0; capacity],
-            labels: fixed_clustering,
+            labels: fixed_labels,
             k1,
             k2,
         };
-        x.add_all(dynamic_clustering);
+        x.add_all(dynamic_labels);
         x
     }
 
@@ -255,10 +252,10 @@ impl<'a> ConfusionMatrices<'a> {
         let mut vec = Vec::with_capacity(draws.n_draws);
         for i in 0..draws.n_draws {
             vec.push(ConfusionMatrix::filled(
-                labels,
-                n_clusters,
                 draws.labels(i),
                 draws.n_clusters(i),
+                labels,
+                n_clusters,
             ));
         }
         Self { vec }

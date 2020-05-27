@@ -897,7 +897,7 @@ pub fn minimize_by_salso<T: Rng>(
 }
 
 pub fn minimize_by_enumeration(
-    f: fn(&[usize], &SquareMatrixBorrower) -> f64,
+    f: fn(&[LabelType], &SquareMatrixBorrower) -> f64,
     psm: &SquareMatrixBorrower,
 ) -> Vec<usize> {
     let (tx, rx) = mpsc::channel();
@@ -908,7 +908,8 @@ pub fn minimize_by_enumeration(
                 let mut working_minimum = std::f64::INFINITY;
                 let mut working_minimizer = vec![0usize; psm.n_items()];
                 for partition in iter {
-                    let value = f(&partition[..], psm);
+                    let part: Vec<LabelType> = partition.iter().map(|x| *x as LabelType).collect();
+                    let value = f(&part[..], psm);
                     if value < working_minimum {
                         working_minimum = value;
                         working_minimizer = partition;
@@ -923,7 +924,8 @@ pub fn minimize_by_enumeration(
     let mut working_minimum = std::f64::INFINITY;
     let mut working_minimizer = vec![0usize; psm.n_items()];
     for partition in rx {
-        let value = f(&partition[..], psm);
+        let part: Vec<LabelType> = partition.iter().map(|x| *x as LabelType).collect();
+        let value = f(&part[..], psm);
         if value < working_minimum {
             working_minimum = value;
             working_minimizer = partition;

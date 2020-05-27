@@ -5,14 +5,14 @@ use std::slice;
 
 // Expectation of Binder loss
 
-pub fn binder_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
-    let ni = partition.len();
+pub fn binder_single_kernel(labels: &[LabelType], psm: &SquareMatrixBorrower) -> f64 {
+    let ni = labels.len();
     assert_eq!(ni, psm.n_items());
     let mut sum = 0.0;
     for j in 0..ni {
         for i in 0..j {
             let p = unsafe { *psm.get_unchecked((i, j)) };
-            sum += if unsafe { *partition.get_unchecked(i) == *partition.get_unchecked(j) } {
+            sum += if unsafe { *labels.get_unchecked(i) == *labels.get_unchecked(j) } {
                 1.0 - p
             } else {
                 p
@@ -22,7 +22,7 @@ pub fn binder_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> 
     sum
 }
 
-pub fn binder_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn binder_single(partition: &[LabelType], psm: &SquareMatrixBorrower) -> f64 {
     let nif = psm.n_items() as f64;
     binder_single_kernel(partition, psm) * 2.0 / (nif * nif)
 }
@@ -106,7 +106,7 @@ pub fn omari_multiple(
 
 // Approximation of expectation of one minus adjusted Rand index
 
-pub fn omariapprox_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn omariapprox_single(partition: &[LabelType], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum_p = 0.0;
@@ -228,7 +228,7 @@ pub fn vilb_expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
     s1
 }
 
-pub fn vilb_single_kernel(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn vilb_single_kernel(partition: &[LabelType], psm: &SquareMatrixBorrower) -> f64 {
     let ni = partition.len();
     assert_eq!(ni, psm.n_items());
     let mut sum = 0.0;
@@ -274,7 +274,7 @@ pub fn vilb_single_kernel_for_partial_partition(
     sum
 }
 
-pub fn vilb_single(partition: &[usize], psm: &SquareMatrixBorrower) -> f64 {
+pub fn vilb_single(partition: &[LabelType], psm: &SquareMatrixBorrower) -> f64 {
     (vilb_single_kernel(partition, psm) + vilb_expected_loss_constant(psm)) / (psm.n_items() as f64)
 }
 
@@ -353,35 +353,53 @@ mod tests_loss {
         let mut results = vec![0.0; n_partitions];
         binder_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
-            assert_relative_eq!(
-                binder_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
-                results[k]
-            );
+            let part: Vec<LabelType> = samples_view
+                .get(k)
+                .labels_via_copying()
+                .iter()
+                .map(|x| *x as LabelType)
+                .collect();
+            assert_relative_eq!(binder_single(&part[..], psm_view), results[k]);
         }
         omari_multiple(samples_view, samples_view, &mut results[..]);
         omariapprox_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
-            assert_relative_eq!(
-                omariapprox_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
-                results[k]
-            );
+            let part: Vec<LabelType> = samples_view
+                .get(k)
+                .labels_via_copying()
+                .iter()
+                .map(|x| *x as LabelType)
+                .collect();
+            assert_relative_eq!(omariapprox_single(&part[..], psm_view), results[k]);
         }
         vi_multiple(samples_view, samples_view, &mut results[..]);
         vilb_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
-            assert_ulps_eq!(
-                vilb_single(&samples_view.get(k).labels_via_copying()[..], psm_view),
-                results[k]
-            );
+            let part: Vec<LabelType> = samples_view
+                .get(k)
+                .labels_via_copying()
+                .iter()
+                .map(|x| *x as LabelType)
+                .collect();
+            assert_ulps_eq!(vilb_single(&part[..], psm_view), results[k]);
         }
         for k in 1..n_partitions {
+            let part: Vec<LabelType> = samples_view
+                .get(k)
+                .labels_via_copying()
+                .iter()
+                .map(|x| *x as LabelType)
+                .collect();
+            let part0: Vec<LabelType> = samples_view
+                .get(k - 1)
+                .labels_via_copying()
+                .iter()
+                .map(|x| *x as LabelType)
+                .collect();
             assert_ulps_eq!(
                 ((1.0 / (n_items as f64))
-                    * (vilb_single_kernel(&samples_view.get(k).labels_via_copying()[..], psm_view)
-                        - vilb_single_kernel(
-                            &samples_view.get(k - 1).labels_via_copying()[..],
-                            psm_view
-                        ))) as f32,
+                    * (vilb_single_kernel(&part[..], psm_view)
+                        - vilb_single_kernel(&part0[..], psm_view))) as f32,
                 (results[k] - results[k - 1]) as f32,
             );
         }
