@@ -176,13 +176,12 @@ impl<'a> Computer for Binder2Computer<'a> {
     ) -> f64 {
         let mut sum = 0.0;
         let n2 = self.cms.vec[0].n2(subset_index) as f64;
-        sum += (self.cms.vec.len() as f64) * ((n2 + 1.0) * (n2 + 1.0) - n2 * n2);
+        sum += (self.cms.vec.len() as f64) * n2;
         for cm in &self.cms.vec {
             let subset_index_fixed = cm.labels[i];
             let n1 = cm.n1(subset_index_fixed) as f64;
-            sum += (n1 + 1.0) * (n1 + 1.0) - n1 * n1;
             let n12 = cm.n12(subset_index_fixed, subset_index) as f64;
-            sum -= 2.0 * ((n12 + 1.0) * (n12 + 1.0) - n12 * n12);
+            sum += n1 - 2.0 * n12;
         }
         sum
     }
