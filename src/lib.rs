@@ -351,6 +351,6 @@ impl Clusterings {
     }
 
     pub fn n_clusters(&self, index: usize) -> LabelType {
-        self.n_clusters[index]
+        unsafe { *self.n_clusters.get_unchecked(index) }
     }
 }
