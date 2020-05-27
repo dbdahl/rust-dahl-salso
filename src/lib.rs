@@ -328,7 +328,7 @@ impl Clusterings {
             let mut next_new_label = 0;
             for j in 0..n_items {
                 let c = *map
-                    .entry(original_labels[j * n_draws + i])
+                    .entry(unsafe { original_labels.get_unchecked(j * n_draws + i) })
                     .or_insert_with(|| {
                         let c = next_new_label;
                         next_new_label += 1;
