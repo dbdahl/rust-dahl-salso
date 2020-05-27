@@ -90,16 +90,18 @@ impl Log2Cache {
 
     pub fn plog2p(&self, x: CountType, n: CountType) -> f64 {
         let p = (x as f64) / (n as f64);
-        let log2p = self.log2n[x as usize] - self.log2n[n as usize];
+        let log2p = unsafe {
+            *self.log2n.get_unchecked(x as usize) - *self.log2n.get_unchecked(n as usize)
+        };
         p * log2p
     }
 
     pub fn nlog2n(&self, n: CountType) -> f64 {
-        self.nlog2n[n as usize]
+        unsafe { *self.nlog2n.get_unchecked(n as usize) }
     }
 
     pub fn nlog2n_difference(&self, x: CountType) -> f64 {
-        self.nlog2n_difference[x as usize]
+        unsafe { *self.nlog2n_difference.get_unchecked(x as usize) }
     }
 }
 
@@ -160,7 +162,7 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn n1(&self, i: LabelType) -> CountType {
-        self.data[i as usize + 1]
+        unsafe { *self.data.get_unchecked(i as usize + 1) }
     }
 
     pub fn p1(&self, i: LabelType) -> f64 {
@@ -168,7 +170,11 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn n2(&self, j: LabelType) -> CountType {
-        self.data[(self.k1 as usize + 1) * (j as usize + 1)]
+        unsafe {
+            *self
+                .data
+                .get_unchecked((self.k1 as usize + 1) * (j as usize + 1))
+        }
     }
 
     pub fn p2(&self, j: LabelType) -> f64 {
@@ -176,7 +182,11 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     pub fn n12(&self, i: LabelType, j: LabelType) -> CountType {
-        self.data[(self.k1 as usize + 1) * (j as usize + 1) + (i as usize + 1)]
+        unsafe {
+            *self
+                .data
+                .get_unchecked((self.k1 as usize + 1) * (j as usize + 1) + (i as usize + 1))
+        }
     }
 
     pub fn p12(&self, i: LabelType, j: LabelType) -> f64 {
@@ -201,28 +211,37 @@ impl<'a> ConfusionMatrix<'a> {
     }
 
     fn add_with_index(&mut self, item_index: usize, label: LabelType) {
-        self.data[0] += 1;
-        let offset = (self.k1 as usize + 1) * (label as usize + 1);
-        self.data[offset] += 1;
-        let ii_plus_one = self.labels[item_index] as usize + 1;
-        self.data[ii_plus_one] += 1;
-        self.data[offset + ii_plus_one] += 1;
+        unsafe {
+            *self.data.get_unchecked_mut(0) += 1;
+            let offset = (self.k1 as usize + 1) * (label as usize + 1);
+            *self.data.get_unchecked_mut(offset) += 1;
+            let ii_plus_one = *self.labels.get_unchecked(item_index) as usize + 1;
+            *self.data.get_unchecked_mut(ii_plus_one) += 1;
+            *self.data.get_unchecked_mut(offset + ii_plus_one) += 1;
+        }
     }
 
     fn remove_with_index(&mut self, item_index: usize, label: LabelType) {
-        self.data[0] -= 1;
-        let offset = (self.k1 as usize + 1) * (label as usize + 1);
-        self.data[offset] -= 1;
-        let ii_plus_one = self.labels[item_index] as usize + 1;
-        self.data[ii_plus_one] -= 1;
-        self.data[offset + ii_plus_one] -= 1;
+        unsafe {
+            *self.data.get_unchecked_mut(0) -= 1;
+            let offset = (self.k1 as usize + 1) * (label as usize + 1);
+            *self.data.get_unchecked_mut(offset) -= 1;
+            let ii_plus_one = *self.labels.get_unchecked(item_index) as usize + 1;
+            *self.data.get_unchecked_mut(ii_plus_one) -= 1;
+            *self.data.get_unchecked_mut(offset + ii_plus_one) -= 1;
+        }
     }
 
     fn swap_remove(&mut self, killed_label: LabelType, moved_label: LabelType) {
         if killed_label != moved_label {
             for i in 0..=self.k1 {
-                self.data[(self.k1 as usize + 1) * (killed_label as usize + 1) + i as usize] =
-                    self.data[(self.k1 as usize + 1) * (moved_label as usize + 1) + i as usize]
+                unsafe {
+                    *self.data.get_unchecked_mut(
+                        (self.k1 as usize + 1) * (killed_label as usize + 1) + i as usize,
+                    ) = *self.data.get_unchecked(
+                        (self.k1 as usize + 1) * (moved_label as usize + 1) + i as usize,
+                    )
+                }
             }
         }
         self.k2 -= 1;
