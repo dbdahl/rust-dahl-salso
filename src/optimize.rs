@@ -215,7 +215,7 @@ impl<'a> OneMinusARIComputer<'a> {
 
 impl<'a> Computer for OneMinusARIComputer<'a> {
     fn expected_loss_kernel(&self) -> f64 {
-        omari_single_kernel(&self.cms.vec)
+        omari_single_kernel(&self.cms)
     }
 
     fn speculative_add(
@@ -227,7 +227,7 @@ impl<'a> Computer for OneMinusARIComputer<'a> {
         for cm in &mut self.cms.vec {
             cm.add_with_index(i, subset_index);
         }
-        let result = omari_single_kernel(&self.cms.vec);
+        let result = omari_single_kernel(&self.cms);
         for cm in &mut self.cms.vec {
             cm.remove_with_index(i, subset_index);
         }
@@ -401,7 +401,7 @@ impl<'a> VarOfInfoComputer<'a> {
 
 impl<'a> Computer for VarOfInfoComputer<'a> {
     fn expected_loss_kernel(&self) -> f64 {
-        vi_single_kernel(&self.cms.vec, self.cache)
+        vi_single_kernel(&self.cms, self.cache)
     }
 
     fn speculative_add(

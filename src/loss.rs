@@ -58,18 +58,18 @@ pub fn binder_multiple(
 
 // Expectation of one minus adjusted Rand index
 
-pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
+pub fn omari_single_kernel(cms: &ConfusionMatrices) -> f64 {
     pub fn n_choose_2_times_2(x: CountType) -> f64 {
         let x = x as f64;
         x * (x - 1.0)
     }
     let mut sum = 0.0;
     let mut sum2 = 0.0;
-    let cm = &cms[0];
+    let cm = &cms.vec[0];
     for j in 0..cm.k2() {
         sum2 += n_choose_2_times_2(cm.n2(j));
     }
-    for cm in cms {
+    for cm in &cms.vec {
         let mut sum1 = 0.0;
         let mut sum12 = 0.0;
         for i in 0..cm.k1() {
@@ -78,15 +78,15 @@ pub fn omari_single_kernel(cms: &Vec<ConfusionMatrix>) -> f64 {
                 sum12 += n_choose_2_times_2(cm.n12(i, j));
             }
         }
-        let offset = sum1 * sum2 / n_choose_2_times_2(cms[0].n());
+        let offset = sum1 * sum2 / n_choose_2_times_2(cms.vec[0].n());
         sum += (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
     }
-    1.0 - sum / (cms.len() as f64)
+    1.0 - sum / (cms.vec.len() as f64)
 }
 
 pub fn omari_single(labels: &[LabelType], n_clusters: LabelType, draws: &Clusterings) -> f64 {
     let cms = ConfusionMatrices::from_draws_filled(draws, labels, n_clusters);
-    omari_single_kernel(&cms.vec)
+    omari_single_kernel(&cms)
 }
 
 pub fn omari_multiple(
@@ -162,14 +162,14 @@ pub fn omariapprox_multiple(
 
 // Expectation of the variation of information
 
-pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
+pub fn vi_single_kernel(cms: &ConfusionMatrices, cache: &Log2Cache) -> f64 {
     let mut sum = 0.0;
     let mut sum2 = 0.0;
-    let cm = &cms[0];
+    let cm = &cms.vec[0];
     for j in 0..cm.k2() {
         sum2 += cache.nlog2n(cm.n2(j));
     }
-    for cm in cms {
+    for cm in &cms.vec {
         let mut vi = 0.0;
         for i in 0..cm.k1() {
             vi += cache.nlog2n(cm.n1(i));
@@ -179,7 +179,7 @@ pub fn vi_single_kernel(cms: &Vec<ConfusionMatrix>, cache: &Log2Cache) -> f64 {
         }
         sum += (vi + sum2) / (cm.n() as f64);
     }
-    sum / (cms.len() as f64)
+    sum / (cms.vec.len() as f64)
 }
 
 pub fn vi_single(
@@ -189,7 +189,7 @@ pub fn vi_single(
     cache: &Log2Cache,
 ) -> f64 {
     let cms = ConfusionMatrices::from_draws_filled(draws, labels, n_clusters);
-    vi_single_kernel(&cms.vec, cache)
+    vi_single_kernel(&cms, cache)
 }
 
 pub fn vi_multiple(
