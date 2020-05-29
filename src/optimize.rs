@@ -1,6 +1,8 @@
 extern crate num_cpus;
 extern crate rand;
 
+use crate::clustering::Clusterings;
+use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::loss::*;
 use crate::*;
 use dahl_partition::*;
@@ -178,7 +180,7 @@ impl<'a> Computer for Binder2Computer<'a> {
         let n2 = self.cms.vec[0].n2(subset_index) as f64;
         sum += (self.cms.vec.len() as f64) * n2;
         for cm in &self.cms.vec {
-            let subset_index_fixed = cm.labels[i];
+            let subset_index_fixed = cm.label(i);
             let n1 = cm.n1(subset_index_fixed) as f64;
             let n12 = cm.n12(subset_index_fixed, subset_index) as f64;
             sum += n1 - 2.0 * n12;
@@ -416,7 +418,7 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
                 .cache
                 .nlog2n_difference(self.cms.vec[0].n2(subset_index));
         for cm in &self.cms.vec {
-            let subset_index_fixed = cm.labels[i];
+            let subset_index_fixed = cm.label(i);
             sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
             sum -= 2.0
                 * self

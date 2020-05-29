@@ -1,5 +1,7 @@
 use dahl_partition::*;
 
+use crate::clustering::Clusterings;
+use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::*;
 use std::slice;
 
@@ -98,7 +100,7 @@ pub fn omari_multiple(
     assert_eq!(n_items, draws.n_items());
     let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
     let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
-    for k in 0..clusterings.n_draws {
+    for k in 0..clusterings.n_clusterings() {
         let omari = omari_single(clusterings.labels(k), clusterings.n_clusters(k), &draws);
         unsafe { *results.get_unchecked_mut(k) = omari };
     }
@@ -202,7 +204,7 @@ pub fn vi_multiple(
     let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
     let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
     let cache = Log2Cache::new(n_items);
-    for k in 0..clusterings.n_draws {
+    for k in 0..clusterings.n_clusterings() {
         let vi = vi_single(
             clusterings.labels(k),
             clusterings.n_clusters(k),
