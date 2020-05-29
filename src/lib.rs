@@ -346,11 +346,19 @@ impl Clusterings {
         }
     }
 
-    pub fn labels(&self, index: usize) -> &[LabelType] {
-        &self.labels[index * self.n_items..(index + 1) * self.n_items]
+    pub fn label(&self, draw_index: usize, item_index: usize) -> LabelType {
+        unsafe {
+            *self
+                .labels
+                .get_unchecked(draw_index * self.n_items + item_index)
+        }
     }
 
-    pub fn n_clusters(&self, index: usize) -> LabelType {
-        unsafe { *self.n_clusters.get_unchecked(index) }
+    pub fn labels(&self, draw_index: usize) -> &[LabelType] {
+        &self.labels[draw_index * self.n_items..(draw_index + 1) * self.n_items]
+    }
+
+    pub fn n_clusters(&self, draw_index: usize) -> LabelType {
+        unsafe { *self.n_clusters.get_unchecked(draw_index) }
     }
 }
