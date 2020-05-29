@@ -38,6 +38,14 @@ impl Clusterings {
         }
     }
 
+    pub fn n_clusterings(&self) -> usize {
+        self.n_clusterings
+    }
+
+    pub fn n_items(&self) -> usize {
+        self.n_items
+    }
+
     pub fn label(&self, draw_index: usize, item_index: usize) -> LabelType {
         unsafe {
             *self
@@ -52,9 +60,5 @@ impl Clusterings {
 
     pub fn n_clusters(&self, draw_index: usize) -> LabelType {
         unsafe { *self.n_clusters.get_unchecked(draw_index) }
-    }
-
-    pub fn n_clusterings(&self) -> usize {
-        self.n_clusterings
     }
 }
