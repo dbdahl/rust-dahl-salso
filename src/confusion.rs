@@ -77,7 +77,7 @@ impl<'a> ConfusionMatrix<'a> {
     pub fn filled(
         fixed_labels: &'a [LabelType],
         fixed_n_clusters: LabelType,
-        dynamic_labels: &'a [LabelType],
+        dynamic_labels: &[LabelType],
         dynamic_n_clusters: LabelType,
     ) -> Self {
         let n_items = fixed_labels.len();
@@ -95,8 +95,8 @@ impl<'a> ConfusionMatrix<'a> {
         x
     }
 
-    pub fn label(&self, index_index: usize) -> LabelType {
-        unsafe { *self.labels.get_unchecked(index_index) }
+    pub fn label(&self, item_index: usize) -> LabelType {
+        unsafe { *self.labels.get_unchecked(item_index) }
     }
 
     pub fn k1(&self) -> LabelType {
@@ -215,7 +215,7 @@ impl<'a> ConfusionMatrices<'a> {
 
     pub fn from_draws_filled(
         draws: &'a Clusterings,
-        labels: &'a [LabelType],
+        labels: &[LabelType],
         n_clusters: LabelType,
     ) -> Self {
         let mut vec = Vec::with_capacity(draws.n_clusterings());
@@ -258,5 +258,12 @@ impl<'a> ConfusionMatrices<'a> {
             }
         });
         subset_index
+    }
+
+    pub fn reassign(&mut self, item_index: usize, to_label: LabelType, from_label: LabelType) {
+        for cm in &mut self.vec {
+            cm.remove_with_index(item_index, from_label);
+            cm.add_with_index(item_index, to_label);
+        }
     }
 }

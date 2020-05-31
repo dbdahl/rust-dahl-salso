@@ -5,6 +5,7 @@ use crate::clustering::Clusterings;
 use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::loss::*;
 use crate::*;
+use core::iter;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
@@ -588,6 +589,207 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
     }
 }
 
+// Alternative
+
+struct WorkingClustering {
+    labels: Vec<LabelType>,
+    sizes: Vec<CountType>,
+    occupied_clusters: Vec<LabelType>,
+}
+
+const NUMBER_OF_CLUSTERS_GUESS: usize = 15;
+
+impl WorkingClustering {
+    pub fn one_cluster(n_items: usize) -> Self {
+        let mut sizes = Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS);
+        sizes.push(n_items as CountType);
+        let mut occupied_clusters = Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS);
+        occupied_clusters.push(0);
+        Self {
+            labels: vec![0; n_items],
+            sizes,
+            occupied_clusters,
+        }
+    }
+
+    pub fn from_slice(labels: &[LabelType]) -> Self {
+        Self::from_vector(labels.to_vec())
+    }
+
+    pub fn from_vector(labels: Vec<LabelType>) -> Self {
+        let mut x = Self {
+            labels,
+            sizes: Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS),
+            occupied_clusters: Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS),
+        };
+        for label in &x.labels {
+            let label = *label as usize;
+            if label >= x.sizes.len() {
+                x.sizes.resize(label + 1, 0)
+            }
+            x.sizes[label] += 1;
+        }
+        for (index, size) in x.sizes.iter().enumerate() {
+            if *size > 0 {
+                x.occupied_clusters.push(index as LabelType)
+            }
+        }
+        x
+    }
+
+    pub fn ensure_empty_cluster(&mut self, cms: &mut ConfusionMatrices) -> LabelType {
+        match self.sizes.iter().rev().position(|&x| x == 0) {
+            Some(label) => label as LabelType,
+            None => {
+                self.sizes.push(0);
+                for cm in &mut cms.vec {
+                    cm.new_subset();
+                }
+                (self.sizes.len() - 1) as LabelType
+            }
+        }
+    }
+
+    pub fn n_clusters(&self) -> LabelType {
+        self.sizes.len() as LabelType
+    }
+
+    pub fn as_slice(&self) -> &[LabelType] {
+        &self.labels[..]
+    }
+
+    pub fn get(&self, item_index: usize) -> LabelType {
+        self.labels[item_index]
+    }
+
+    pub unsafe fn get_unchecked(&self, item_index: usize) -> LabelType {
+        *self.labels.get_unchecked(item_index)
+    }
+
+    pub fn assign(&mut self, item_index: usize, label: LabelType) {
+        self.labels[item_index] = label;
+        if self.sizes[label as usize] == 0 {
+            self.occupied_clusters.push(label);
+        }
+        self.sizes[label as usize] += 1;
+    }
+
+    pub unsafe fn assign_unchecked(&mut self, item_index: usize, label: LabelType) {
+        *self.labels.get_unchecked_mut(item_index) = label;
+        if *self.sizes.get_unchecked(label as usize) == 0 {
+            self.occupied_clusters.push(label);
+        }
+        *self.sizes.get_unchecked_mut(label as usize) += 1;
+    }
+
+    pub fn reassign(&mut self, item_index: usize, new_label: LabelType) {
+        let old_label = self.labels[item_index];
+        if new_label != old_label {
+            self.labels[item_index] = new_label;
+            self.sizes[old_label as usize] -= 1;
+            if self.sizes[old_label as usize] == 0 {
+                self.occupied_clusters.swap_remove(
+                    self.occupied_clusters
+                        .iter()
+                        .position(|x| *x == old_label)
+                        .unwrap(),
+                );
+            }
+            if self.sizes[new_label as usize] == 0 {
+                self.occupied_clusters.push(new_label);
+            }
+            self.sizes[new_label as usize] += 1;
+        }
+    }
+
+    pub unsafe fn reassign_unchecked(&mut self, item_index: usize, new_label: LabelType) {
+        let old_label = *self.labels.get_unchecked(item_index);
+        if new_label != old_label {
+            *self.labels.get_unchecked_mut(item_index) = new_label;
+            *self.sizes.get_unchecked_mut(old_label as usize) -= 1;
+            if *self.sizes.get_unchecked(old_label as usize) == 0 {
+                self.occupied_clusters.swap_remove(
+                    self.occupied_clusters
+                        .iter()
+                        .position(|x| *x == old_label)
+                        .unwrap(),
+                );
+            }
+            if *self.sizes.get_unchecked(new_label as usize) == 0 {
+                self.occupied_clusters.push(new_label);
+            }
+            *self.sizes.get_unchecked_mut(new_label as usize) += 1;
+        }
+    }
+}
+
+fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> WorkingClustering {
+    WorkingClustering::from_vector({
+        let mut v = Vec::with_capacity(n_items);
+        v.resize_with(n_items, || rng.gen_range(0, n_items as LabelType));
+        v
+    })
+}
+
+fn delta_binder(
+    item_index: usize,
+    to_label: LabelType,
+    from_label: LabelType,
+    cms: &ConfusionMatrices,
+) -> f64 {
+    let offset = if from_label == to_label { 1 } else { 0 };
+    let mut sum = 0.0;
+    let n2 = (cms.vec[0].n2(to_label) - offset) as f64;
+    sum += (cms.vec.len() as f64) * n2;
+    for cm in &cms.vec {
+        let other_label = cm.label(item_index);
+        let n1 = (cm.n1(other_label) - offset) as f64;
+        if n1 > 0.0 {
+            let n12 = (cm.n12(other_label, to_label) - offset) as f64;
+            sum += n1 - 2.0 * n12;
+        }
+    }
+    sum
+}
+
+pub fn minimize_once_by_salso_binder<'a, T: Rng>(
+    draws: &Clusterings,
+    p: SALSOParameters,
+    rng: &mut T,
+) -> (Vec<usize>, f64, u32, f64, u32) {
+    let n_items = draws.n_items();
+    // let mut state = random_state(n_items, rng);
+    let mut state = WorkingClustering::one_cluster(n_items);
+    let mut cms = ConfusionMatrices::from_draws_filled(draws, state.as_slice(), state.n_clusters());
+    let mut permutation: Vec<usize> = (0..p.n_items).collect();
+    let mut scan_counter = 0;
+    let mut state_changed = true;
+    while state_changed {
+        state_changed = false;
+        scan_counter += 1;
+        permutation.shuffle(rng);
+        for item_index in &permutation {
+            let item_index = *item_index;
+            let label_of_empty_cluster = state.ensure_empty_cluster(&mut cms);
+            let from_label = state.get(item_index);
+            let iter = state
+                .occupied_clusters
+                .iter()
+                .chain(iter::once(&label_of_empty_cluster))
+                .map(|to_label| delta_binder(item_index, *to_label, from_label, &cms))
+                .enumerate();
+            let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0 as LabelType;
+            if to_label != from_label {
+                state.reassign(item_index, to_label);
+                cms.reassign(item_index, to_label, from_label);
+                state_changed = true;
+            }
+        }
+    }
+    let labels = state.labels.iter().map(|x| *x as usize).collect();
+    (labels, 0., scan_counter, 0.0, 1)
+}
+
 // General algorithm
 
 fn ensure_empty_subset<U: Computer>(
@@ -788,7 +990,8 @@ pub fn minimize_by_salso<T: Rng>(
                     minimize_once_by_salso(Box::new(|| BinderComputer::new(pdi.psm())), p, rng)
                 }
                 LossFunction::Binder2 => {
-                    minimize_once_by_salso(Box::new(|| Binder2Computer::new(pdi.draws())), p, rng)
+                    minimize_once_by_salso_binder(pdi.draws(), p, rng)
+                    // minimize_once_by_salso(Box::new(|| Binder2Computer::new(pdi.draws())), p, rng)
                 }
                 LossFunction::OneMinusARI => minimize_once_by_salso(
                     Box::new(|| OneMinusARIComputer::new(pdi.draws())),
