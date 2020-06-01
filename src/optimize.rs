@@ -6,7 +6,6 @@ use crate::clustering::Clusterings;
 use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::loss::*;
 use crate::*;
-use core::iter;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
@@ -595,41 +594,43 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 #[derive(Debug)]
 struct WorkingClustering {
     labels: Vec<LabelType>,
+    max_clusters: LabelType,
     sizes: Vec<CountType>,
     occupied_clusters: Vec<LabelType>,
+    potentially_empty_label: LabelType,
 }
 
-const NUMBER_OF_CLUSTERS_GUESS: usize = 15;
-
 impl WorkingClustering {
-    pub fn one_cluster(n_items: usize) -> Self {
-        let mut sizes = Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS);
-        sizes.push(n_items as CountType);
-        let mut occupied_clusters = Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS);
+    pub fn one_cluster(n_items: usize, max_clusters: LabelType) -> Self {
+        let max_clusters = max_clusters.max(2);
+        let mut sizes = vec![0; max_clusters as usize];
+        sizes[0] = n_items as CountType;
+        let mut occupied_clusters = Vec::with_capacity(max_clusters as usize);
         occupied_clusters.push(0);
         Self {
             labels: vec![0; n_items],
+            max_clusters,
             sizes,
             occupied_clusters,
+            potentially_empty_label: 1,
         }
     }
 
-    pub fn from_slice(labels: &[LabelType]) -> Self {
-        Self::from_vector(labels.to_vec())
+    pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
+        Self::from_vector(labels.to_vec(), max_clusters)
     }
 
-    pub fn from_vector(labels: Vec<LabelType>) -> Self {
+    pub fn from_vector(labels: Vec<LabelType>, max_clusters: LabelType) -> Self {
+        let max_clusters = max_clusters.max(2);
         let mut x = Self {
             labels,
-            sizes: Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS),
-            occupied_clusters: Vec::with_capacity(NUMBER_OF_CLUSTERS_GUESS),
+            max_clusters,
+            sizes: vec![0; max_clusters as usize],
+            occupied_clusters: Vec::with_capacity(max_clusters as usize),
+            potentially_empty_label: 0,
         };
         for label in &x.labels {
-            let label = *label as usize;
-            if label >= x.sizes.len() {
-                x.sizes.resize(label + 1, 0)
-            }
-            x.sizes[label] += 1;
+            x.sizes[*label as usize] += 1;
         }
         for (index, size) in x.sizes.iter().enumerate() {
             if *size > 0 {
@@ -639,17 +640,26 @@ impl WorkingClustering {
         x
     }
 
-    pub fn label_of_empty_cluster(&mut self, cms: &mut ConfusionMatrices) -> LabelType {
-        match self.sizes.iter().rev().position(|&size| size == 0) {
-            Some(index) => (self.sizes.len() - index - 1) as LabelType,
-            None => {
-                self.sizes.push(0);
-                for cm in &mut cms.vec {
-                    cm.new_subset();
+    pub fn label_of_empty_cluster(&mut self) -> Option<LabelType> {
+        if self.occupied_clusters.len() >= self.max_clusters as usize {
+            None
+        } else {
+            if self.sizes[self.potentially_empty_label as usize] == 0 {
+                Some(self.potentially_empty_label)
+            } else {
+                match self.sizes.iter().rev().position(|&size| size == 0) {
+                    Some(index) => {
+                        self.potentially_empty_label = (self.sizes.len() - index - 1) as LabelType;
+                        Some(self.potentially_empty_label)
+                    }
+                    None => None,
                 }
-                (self.sizes.len() - 1) as LabelType
             }
         }
+    }
+
+    pub fn max_clusters(&self) -> LabelType {
+        self.max_clusters
     }
 
     pub fn n_clusters(&self) -> LabelType {
@@ -726,11 +736,14 @@ impl WorkingClustering {
 }
 
 fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> WorkingClustering {
-    WorkingClustering::from_vector({
-        let mut v = Vec::with_capacity(n_items);
-        v.resize_with(n_items, || rng.gen_range(0, n_items as LabelType));
-        v
-    })
+    WorkingClustering::from_vector(
+        {
+            let mut v = Vec::with_capacity(n_items);
+            v.resize_with(n_items, || rng.gen_range(0, n_items as LabelType));
+            v
+        },
+        n_items as LabelType,
+    )
 }
 
 fn delta_binder(
@@ -761,8 +774,9 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
 ) -> (Vec<usize>, f64, u32, f64, u32) {
     let n_items = draws.n_items();
     //let mut state = random_state(n_items, rng);
-    let mut state = WorkingClustering::one_cluster(n_items);
-    let mut cms = ConfusionMatrices::from_draws_filled(draws, state.as_slice(), state.n_clusters());
+    let mut state = WorkingClustering::one_cluster(n_items, p.max_label + 1);
+    let mut cms =
+        ConfusionMatrices::from_draws_filled(draws, state.as_slice(), state.max_clusters());
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut scan_counter = 0;
     let mut state_changed = true;
@@ -772,12 +786,12 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
         permutation.shuffle(rng);
         for item_index in &permutation {
             let item_index = *item_index;
-            let label_of_empty_cluster = state.label_of_empty_cluster(&mut cms);
+            let label_of_empty_cluster = state.label_of_empty_cluster();
             let from_label = state.get(item_index);
             let iter = state
                 .occupied_clusters
                 .iter()
-                .chain(iter::once(&label_of_empty_cluster))
+                .chain(label_of_empty_cluster.iter())
                 .map(|to_label| {
                     (
                         *to_label,
