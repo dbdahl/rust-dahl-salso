@@ -1,4 +1,5 @@
 extern crate num_cpus;
+extern crate num_traits;
 extern crate rand;
 
 use crate::clustering::Clusterings;
@@ -33,7 +34,7 @@ fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     }
 }
 
-fn cmp_f64_with_enumeration(a: &(usize, f64), b: &(usize, f64)) -> Ordering {
+fn cmp_f64_with_enumeration<T: num_traits::PrimInt>(a: &(T, f64), b: &(T, f64)) -> Ordering {
     if a.1.is_nan() {
         Ordering::Greater
     } else if b.1.is_nan() {
@@ -591,6 +592,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 
 // Alternative
 
+#[derive(Debug)]
 struct WorkingClustering {
     labels: Vec<LabelType>,
     sizes: Vec<CountType>,
@@ -637,9 +639,9 @@ impl WorkingClustering {
         x
     }
 
-    pub fn ensure_empty_cluster(&mut self, cms: &mut ConfusionMatrices) -> LabelType {
-        match self.sizes.iter().rev().position(|&x| x == 0) {
-            Some(label) => label as LabelType,
+    pub fn label_of_empty_cluster(&mut self, cms: &mut ConfusionMatrices) -> LabelType {
+        match self.sizes.iter().rev().position(|&size| size == 0) {
+            Some(index) => (self.sizes.len() - index - 1) as LabelType,
             None => {
                 self.sizes.push(0);
                 for cm in &mut cms.vec {
@@ -651,7 +653,7 @@ impl WorkingClustering {
     }
 
     pub fn n_clusters(&self) -> LabelType {
-        self.sizes.len() as LabelType
+        self.occupied_clusters.len() as LabelType
     }
 
     pub fn as_slice(&self) -> &[LabelType] {
@@ -735,12 +737,12 @@ fn delta_binder(
     item_index: usize,
     to_label: LabelType,
     from_label: LabelType,
+    state: &WorkingClustering,
     cms: &ConfusionMatrices,
 ) -> f64 {
     let offset = if from_label == to_label { 1 } else { 0 };
-    let mut sum = 0.0;
-    let n2 = (cms.vec[0].n2(to_label) - offset) as f64;
-    sum += (cms.vec.len() as f64) * n2;
+    let n2 = (state.sizes[to_label as usize] - offset) as f64;
+    let mut sum = (cms.vec.len() as f64) * n2;
     for cm in &cms.vec {
         let other_label = cm.label(item_index);
         let n1 = (cm.n1(other_label) - offset) as f64;
@@ -758,27 +760,31 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
     let n_items = draws.n_items();
-    // let mut state = random_state(n_items, rng);
+    //let mut state = random_state(n_items, rng);
     let mut state = WorkingClustering::one_cluster(n_items);
     let mut cms = ConfusionMatrices::from_draws_filled(draws, state.as_slice(), state.n_clusters());
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut scan_counter = 0;
     let mut state_changed = true;
-    while state_changed {
+    while state_changed && scan_counter < p.max_scans {
         state_changed = false;
         scan_counter += 1;
         permutation.shuffle(rng);
         for item_index in &permutation {
             let item_index = *item_index;
-            let label_of_empty_cluster = state.ensure_empty_cluster(&mut cms);
+            let label_of_empty_cluster = state.label_of_empty_cluster(&mut cms);
             let from_label = state.get(item_index);
             let iter = state
                 .occupied_clusters
                 .iter()
                 .chain(iter::once(&label_of_empty_cluster))
-                .map(|to_label| delta_binder(item_index, *to_label, from_label, &cms))
-                .enumerate();
-            let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0 as LabelType;
+                .map(|to_label| {
+                    (
+                        *to_label,
+                        delta_binder(item_index, *to_label, from_label, &state, &cms),
+                    )
+                });
+            let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
             if to_label != from_label {
                 state.reassign(item_index, to_label);
                 cms.reassign(item_index, to_label, from_label);
