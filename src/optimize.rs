@@ -760,11 +760,12 @@ fn delta_binder(
     let n_draws = cms.len_of(Axis(2));
     let n2 = (state.sizes[to_label as usize] - offset) as f64;
     let mut sum = (n_draws as f64) * n2;
+    let to_index = to_label as usize + 1;
     for draw_index in 0..n_draws {
-        let other_label = draws.label(draw_index, item_index) as usize;
-        let n1 = (cms[(0, other_label, draw_index)] - offset) as f64;
+        let other_index = draws.label(draw_index, item_index) as usize;
+        let n1 = (cms[(0, other_index, draw_index)] - offset) as f64;
         if n1 > 0.0 {
-            let n12 = (cms[(to_label as usize + 1, other_label, draw_index)] - offset) as f64;
+            let n12 = (cms[(to_index, other_index, draw_index)] - offset) as f64;
             sum += n1 - 2.0 * n12;
         }
     }
@@ -785,11 +786,11 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
         draws.n_clusterings(),
     ));
     for item_index in 0..n_items {
-        let label = state.get(item_index);
+        let state_index = state.get(item_index) as usize + 1;
         for draw_index in 0..draws.n_clusterings() {
-            let label2 = draws.label(draw_index, item_index);
-            cms[(0, label2 as usize, draw_index)] += 1;
-            cms[(label as usize + 1, label2 as usize, draw_index)] += 1;
+            let other_index = draws.label(draw_index, item_index) as usize;
+            cms[(0, other_index, draw_index)] += 1;
+            cms[(state_index, other_index, draw_index)] += 1;
         }
     }
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
@@ -816,10 +817,12 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
             let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
             if to_label != from_label {
                 state.reassign(item_index, to_label);
+                let from_index = from_label as usize + 1;
+                let to_index = to_label as usize + 1;
                 for draw_index in 0..draws.n_clusterings() {
                     let label2 = draws.label(draw_index, item_index) as usize;
-                    cms[(from_label as usize + 1, label2, draw_index)] -= 1;
-                    cms[(to_label as usize + 1, label2, draw_index)] += 1;
+                    cms[(from_index, label2, draw_index)] -= 1;
+                    cms[(to_index, label2, draw_index)] += 1;
                 }
                 state_changed = true;
             }
