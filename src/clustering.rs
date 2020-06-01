@@ -7,6 +7,7 @@ pub struct Clusterings {
     n_items: usize,
     labels: Vec<LabelType>,
     n_clusters: Vec<LabelType>,
+    max_clusters: LabelType,
 }
 
 impl Clusterings {
@@ -15,6 +16,7 @@ impl Clusterings {
         let mut labels = Vec::with_capacity(n_draws * n_items);
         let mut n_clusters = Vec::with_capacity(n_draws);
         let mut map = HashMap::new();
+        let mut max_clusters = 0;
         for i in 0..n_draws {
             map.clear();
             let mut next_new_label = 0;
@@ -29,12 +31,16 @@ impl Clusterings {
                 labels.push(c);
             }
             n_clusters.push(next_new_label);
+            if next_new_label > max_clusters {
+                max_clusters = next_new_label
+            }
         }
         Self {
             n_clusterings: n_draws,
             n_items,
             labels,
             n_clusters,
+            max_clusters,
         }
     }
 
@@ -60,5 +66,9 @@ impl Clusterings {
 
     pub fn n_clusters(&self, draw_index: usize) -> LabelType {
         unsafe { *self.n_clusters.get_unchecked(draw_index) }
+    }
+
+    pub fn max_clusters(&self) -> LabelType {
+        self.max_clusters
     }
 }

@@ -1,7 +1,9 @@
+extern crate ndarray;
 extern crate num_cpus;
 extern crate num_traits;
 extern crate rand;
 
+use self::ndarray::{Array3, Axis};
 use crate::clustering::Clusterings;
 use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::loss::*;
@@ -751,16 +753,18 @@ fn delta_binder(
     to_label: LabelType,
     from_label: LabelType,
     state: &WorkingClustering,
-    cms: &ConfusionMatrices,
+    draws: &Clusterings,
+    cms: &Array3<CountType>,
 ) -> f64 {
     let offset = if from_label == to_label { 1 } else { 0 };
+    let n_draws = cms.len_of(Axis(2));
     let n2 = (state.sizes[to_label as usize] - offset) as f64;
-    let mut sum = (cms.vec.len() as f64) * n2;
-    for cm in &cms.vec {
-        let other_label = cm.label(item_index);
-        let n1 = (cm.n1(other_label) - offset) as f64;
+    let mut sum = (n_draws as f64) * n2;
+    for draw_index in 0..n_draws {
+        let other_label = draws.label(draw_index, item_index) as usize;
+        let n1 = (cms[(0, other_label, draw_index)] - offset) as f64;
         if n1 > 0.0 {
-            let n12 = (cm.n12(other_label, to_label) - offset) as f64;
+            let n12 = (cms[(to_label as usize + 1, other_label, draw_index)] - offset) as f64;
             sum += n1 - 2.0 * n12;
         }
     }
@@ -775,8 +779,19 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
     let n_items = draws.n_items();
     //let mut state = random_state(n_items, rng);
     let mut state = WorkingClustering::one_cluster(n_items, p.max_label + 1);
-    let mut cms =
-        ConfusionMatrices::from_draws_filled(draws, state.as_slice(), state.max_clusters());
+    let mut cms = Array3::<CountType>::zeros((
+        state.max_clusters() as usize + 1,
+        draws.max_clusters() as usize,
+        draws.n_clusterings(),
+    ));
+    for item_index in 0..n_items {
+        let label = state.get(item_index);
+        for draw_index in 0..draws.n_clusterings() {
+            let label2 = draws.label(draw_index, item_index);
+            cms[(0, label2 as usize, draw_index)] += 1;
+            cms[(label as usize + 1, label2 as usize, draw_index)] += 1;
+        }
+    }
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut scan_counter = 0;
     let mut state_changed = true;
@@ -795,13 +810,17 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
                 .map(|to_label| {
                     (
                         *to_label,
-                        delta_binder(item_index, *to_label, from_label, &state, &cms),
+                        delta_binder(item_index, *to_label, from_label, &state, &draws, &cms),
                     )
                 });
             let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
             if to_label != from_label {
                 state.reassign(item_index, to_label);
-                cms.reassign(item_index, to_label, from_label);
+                for draw_index in 0..draws.n_clusterings() {
+                    let label2 = draws.label(draw_index, item_index) as usize;
+                    cms[(from_label as usize + 1, label2, draw_index)] -= 1;
+                    cms[(to_label as usize + 1, label2, draw_index)] += 1;
+                }
                 state_changed = true;
             }
         }
