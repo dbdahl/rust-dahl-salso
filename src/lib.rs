@@ -13,8 +13,8 @@ pub mod psm;
 use crate::clustering::Clusterings;
 use dahl_partition::*;
 
-type LabelType = u16; // usize;
-type CountType = u32; // usize;
+type LabelType = u16; // u8; // usize;
+type CountType = u32; // u16; // usize;
 
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
