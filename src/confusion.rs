@@ -15,7 +15,7 @@ impl Log2Cache {
     pub fn new(n: usize) -> Self {
         let mut log2n = Vec::with_capacity(n + 1);
         let mut nlog2n = Vec::with_capacity(n + 1);
-        let mut nlog2n_difference = Vec::with_capacity(n + 1);
+        let mut nlog2n_difference = Vec::with_capacity(n);
         log2n.push(0.0);
         nlog2n.push(0.0);
         for i in 1..=n {

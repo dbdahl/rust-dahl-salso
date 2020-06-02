@@ -423,7 +423,6 @@ impl<'a> Computer for VarOfInfoComputer<'a> {
                 .nlog2n_difference(self.cms.vec[0].n2(subset_index));
         for cm in &self.cms.vec {
             let subset_index_fixed = cm.label(i);
-            sum += self.cache.nlog2n_difference(cm.n1(subset_index_fixed));
             sum -= 2.0
                 * self
                     .cache
@@ -650,9 +649,9 @@ impl WorkingClustering {
             if self.sizes[self.potentially_empty_label as usize] == 0 {
                 Some(self.potentially_empty_label)
             } else {
-                match self.sizes.iter().rev().position(|&size| size == 0) {
+                match self.sizes.iter().position(|&size| size == 0) {
                     Some(index) => {
-                        self.potentially_empty_label = (self.sizes.len() - index - 1) as LabelType;
+                        self.potentially_empty_label = index as LabelType;
                         Some(self.potentially_empty_label)
                     }
                     None => None,
@@ -766,7 +765,8 @@ fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> WorkingClustering {
 }
 
 pub trait LossComputer {
-    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>);
+    #[allow(unused_variables)]
+    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {}
 
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64;
 
@@ -778,8 +778,24 @@ pub trait LossComputer {
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
-    ) -> f64;
+    ) -> f64 {
+        if to_label == from_label {
+            self.compute_loss(&state, &cms)
+        } else {
+            let mut state = state.clone();
+            let mut cms = cms.clone();
+            let n_draws = cms.len_of(Axis(2));
+            state.reassign(item_index, to_label);
+            for draw_index in 0..n_draws {
+                let other_index = draws.label(draw_index, item_index) as usize;
+                cms[(to_label as usize + 1, other_index, draw_index)] += 1;
+                cms[(from_label as usize + 1, other_index, draw_index)] -= 1;
+            }
+            self.compute_loss(&state, &cms)
+        }
+    }
 
+    #[allow(unused_variables)]
     fn decision_callback(
         &mut self,
         item_index: usize,
@@ -788,7 +804,8 @@ pub trait LossComputer {
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
-    );
+    ) {
+    }
 }
 
 // binder
@@ -807,8 +824,6 @@ impl BinderLossComputer {
 }
 
 impl LossComputer for BinderLossComputer {
-    fn initialize(&mut self, _state: &WorkingClustering, _cms: &Array3<CountType>) {}
-
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let mut sum: f64 = state
             .occupied_clusters
@@ -852,17 +867,6 @@ impl LossComputer for BinderLossComputer {
             sum -= (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
         sum
-    }
-
-    fn decision_callback(
-        &mut self,
-        _item_index: usize,
-        _to_label: LabelType,
-        _from_label: LabelType,
-        _state: &WorkingClustering,
-        _cms: &Array3<CountType>,
-        _draws: &Clusterings,
-    ) {
     }
 }
 
@@ -998,8 +1002,6 @@ impl<'a> VILossComputer<'a> {
 }
 
 impl<'a> LossComputer for VILossComputer<'a> {
-    fn initialize(&mut self, _state: &WorkingClustering, _cms: &Array3<CountType>) {}
-
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let sum2: f64 = state
             .occupied_clusters
@@ -1038,29 +1040,18 @@ impl<'a> LossComputer for VILossComputer<'a> {
     ) -> f64 {
         let offset = if from_label == to_label { 1 } else { 0 };
         let n_draws = cms.len_of(Axis(2));
-        let n2 = state.sizes[to_label as usize] - offset;
-        let mut sum = (n_draws as f64) * self.cache.nlog2n_difference(n2);
         let to_index = to_label as usize + 1;
+        let mut sum = (n_draws as f64)
+            * self
+                .cache
+                .nlog2n_difference(state.sizes[to_index - 1 as usize] - offset)
+            / 2.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            let n1 = cms[(0, other_index, draw_index)] - offset;
-            if n1 > 0 {
-                let n12 = cms[(to_index, other_index, draw_index)] - offset;
-                sum += self.cache.nlog2n_difference(n1) - 2.0 * self.cache.nlog2n_difference(n12);
-            }
+            let n12 = cms[(to_index, other_index, draw_index)] - offset;
+            sum -= self.cache.nlog2n_difference(n12);
         }
         sum
-    }
-
-    fn decision_callback(
-        &mut self,
-        _item_index: usize,
-        _to_label: LabelType,
-        _from_label: LabelType,
-        _state: &WorkingClustering,
-        _cms: &Array3<CountType>,
-        _draws: &Clusterings,
-    ) {
     }
 }
 
@@ -1073,12 +1064,12 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     rng: &mut U,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
     let n_items = draws.n_items();
-    //let mut state = random_state(n_items, rng);
+    let mut state = random_state(n_items, rng);
     let max_size = match p.max_size {
         0 | 1 => draws.max_clusters(),
         _ => p.max_size,
     };
-    let mut state = WorkingClustering::one_cluster(n_items, max_size);
+    // let mut state = WorkingClustering::one_cluster(n_items, max_size);
     let mut cms = Array3::<CountType>::zeros((
         state.max_clusters() as usize + 1,
         draws.max_clusters() as usize,
