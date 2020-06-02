@@ -852,37 +852,15 @@ impl LossComputer for BinderLossComputer {
         draws: &Clusterings,
         cms: &Array3<CountType>,
     ) -> f64 {
-        let mut state = state.clone();
-        let mut cms = cms.clone();
-        state.reassign(item_index, to_label);
-        let n_draws = cms.len_of(Axis(2));
-        for draw_index in 0..n_draws {
-            let other_label = draws.label(draw_index, item_index);
-            cms[(to_label as usize + 1, other_label as usize, draw_index)] += 1;
-            cms[(from_label as usize + 1, other_label as usize, draw_index)] -= 1;
-        }
-        self.finalize(&state, &cms);
-        self.compute_loss()
-        /*
         let offset = if from_label == to_label { 1 } else { 0 };
         let n_draws = cms.len_of(Axis(2));
-        let n2 = (state
-            .occupied_clusters
-            .iter()
-            .map(|i| state.sizes[*i as usize] - offset)
-            .sum::<CountType>()) as f64;
-        let mut sum = (n_draws as f64) * n2;
         let to_index = to_label as usize + 1;
+        let mut sum = (n_draws as f64) * ((state.sizes[to_index - 1] - offset) as f64) / 2.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            let n1 = (cms[(0, other_index, draw_index)] - offset) as f64;
-            if n1 > 0.0 {
-                let n12 = (cms[(to_index, other_index, draw_index)] - offset) as f64;
-                sum += n1 - 2.0 * n12;
-            }
+            sum -= (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
         sum
-        */
     }
 
     fn decision_callback(
@@ -1117,7 +1095,6 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
         0 | 1 => draws.max_clusters(),
         _ => p.max_size,
     };
-    println!("max size: {}", max_size);
     let mut state = WorkingClustering::one_cluster(n_items, max_size);
     let mut cms = Array3::<CountType>::zeros((
         state.max_clusters() as usize + 1,
@@ -1165,9 +1142,9 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
                 let from_index = from_label as usize + 1;
                 let to_index = to_label as usize + 1;
                 for draw_index in 0..draws.n_clusterings() {
-                    let label2 = draws.label(draw_index, item_index) as usize;
-                    cms[(from_index, label2, draw_index)] -= 1;
-                    cms[(to_index, label2, draw_index)] += 1;
+                    let other_index = draws.label(draw_index, item_index) as usize;
+                    cms[(from_index, other_index, draw_index)] -= 1;
+                    cms[(to_index, other_index, draw_index)] += 1;
                 }
                 state_changed = true;
             }
