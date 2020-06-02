@@ -768,9 +768,7 @@ fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> WorkingClustering {
 pub trait LossComputer {
     fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>);
 
-    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>);
-
-    fn compute_loss(&self) -> f64;
+    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64;
 
     fn change_in_loss(
         &mut self,
@@ -778,8 +776,8 @@ pub trait LossComputer {
         to_label: LabelType,
         from_label: LabelType,
         state: &WorkingClustering,
-        draws: &Clusterings,
         cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) -> f64;
 
     fn decision_callback(
@@ -788,20 +786,18 @@ pub trait LossComputer {
         to_label: LabelType,
         from_label: LabelType,
         state: &WorkingClustering,
-        draws: &Clusterings,
         cms: &Array3<CountType>,
+        draws: &Clusterings,
     );
 }
 
 // binder
 
-pub(crate) struct BinderLossComputer {
-    loss: f64,
-}
+pub(crate) struct BinderLossComputer {}
 
 impl BinderLossComputer {
     pub fn new() -> Self {
-        Self { loss: 0.0 }
+        Self {}
     }
 
     pub fn n_squared(x: CountType) -> f64 {
@@ -813,7 +809,7 @@ impl BinderLossComputer {
 impl LossComputer for BinderLossComputer {
     fn initialize(&mut self, _state: &WorkingClustering, _cms: &Array3<CountType>) {}
 
-    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let mut sum: f64 = state
             .occupied_clusters
             .iter()
@@ -835,12 +831,7 @@ impl LossComputer for BinderLossComputer {
                 }
             }
         }
-        self.loss =
-            sum / (n_draws as f64 * BinderLossComputer::n_squared(state.labels.len() as CountType));
-    }
-
-    fn compute_loss(&self) -> f64 {
-        self.loss
+        sum / (n_draws as f64 * BinderLossComputer::n_squared(state.labels.len() as CountType))
     }
 
     fn change_in_loss(
@@ -849,8 +840,8 @@ impl LossComputer for BinderLossComputer {
         to_label: LabelType,
         from_label: LabelType,
         state: &WorkingClustering,
-        draws: &Clusterings,
         cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) -> f64 {
         let offset = if from_label == to_label { 1 } else { 0 };
         let n_draws = cms.len_of(Axis(2));
@@ -869,8 +860,8 @@ impl LossComputer for BinderLossComputer {
         _to_label: LabelType,
         _from_label: LabelType,
         _state: &WorkingClustering,
-        _draws: &Clusterings,
         _cms: &Array3<CountType>,
+        _draws: &Clusterings,
     ) {
     }
 }
@@ -922,15 +913,12 @@ impl LossComputer for OMARILossComputer {
         }
     }
 
-    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
-        // DBD:  This is a hack since compute_loss isn't working.
+    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
+        // DBD:  This is a hack since decision_callback isn't working.
         self.n = 0;
         self.sum2 = 0.0;
         self.sums = Array2::<f64>::zeros((cms.len_of(Axis(2)), 2));
         self.initialize(state, cms);
-    }
-
-    fn compute_loss(&self) -> f64 {
         let mut sum = 0.0;
         let sum2 = self.sum2;
         let n_draws = self.sums.len_of(Axis(0));
@@ -948,8 +936,8 @@ impl LossComputer for OMARILossComputer {
         to_label: LabelType,
         from_label: LabelType,
         state: &WorkingClustering,
-        draws: &Clusterings,
         cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) -> f64 {
         let offset = if from_label == to_label { 1 } else { 0 };
         let n_draws = cms.len_of(Axis(2));
@@ -978,8 +966,8 @@ impl LossComputer for OMARILossComputer {
         to_label: LabelType,
         from_label: LabelType,
         state: &WorkingClustering,
-        draws: &Clusterings,
         cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) {
         let n_draws = cms.len_of(Axis(2));
         let n2 = state.sizes[to_label as usize] as f64;
@@ -1000,20 +988,19 @@ impl LossComputer for OMARILossComputer {
 // VI
 
 pub struct VILossComputer<'a> {
-    loss: f64,
     cache: &'a Log2Cache,
 }
 
 impl<'a> VILossComputer<'a> {
     pub fn new(cache: &'a Log2Cache) -> Self {
-        Self { loss: 0.0, cache }
+        Self { cache }
     }
 }
 
 impl<'a> LossComputer for VILossComputer<'a> {
     fn initialize(&mut self, _state: &WorkingClustering, _cms: &Array3<CountType>) {}
 
-    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let sum2: f64 = state
             .occupied_clusters
             .iter()
@@ -1037,11 +1024,7 @@ impl<'a> LossComputer for VILossComputer<'a> {
             }
             sum += (vi + sum2) / (state.labels.len() as f64);
         }
-        self.loss = sum / (n_draws as f64)
-    }
-
-    fn compute_loss(&self) -> f64 {
-        self.loss
+        sum / (n_draws as f64)
     }
 
     fn change_in_loss(
@@ -1050,8 +1033,8 @@ impl<'a> LossComputer for VILossComputer<'a> {
         to_label: LabelType,
         from_label: LabelType,
         state: &WorkingClustering,
-        draws: &Clusterings,
         cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) -> f64 {
         let offset = if from_label == to_label { 1 } else { 0 };
         let n_draws = cms.len_of(Axis(2));
@@ -1075,8 +1058,8 @@ impl<'a> LossComputer for VILossComputer<'a> {
         _to_label: LabelType,
         _from_label: LabelType,
         _state: &WorkingClustering,
-        _draws: &Clusterings,
         _cms: &Array3<CountType>,
+        _draws: &Clusterings,
     ) {
     }
 }
@@ -1130,14 +1113,14 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
                     (
                         *to_label,
                         loss_computer.change_in_loss(
-                            item_index, *to_label, from_label, &state, &draws, &cms,
+                            item_index, *to_label, from_label, &state, &cms, &draws,
                         ),
                     )
                 });
             let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
             if to_label != from_label {
                 loss_computer
-                    .decision_callback(item_index, to_label, from_label, &state, &draws, &cms);
+                    .decision_callback(item_index, to_label, from_label, &state, &cms, &draws);
                 state.reassign(item_index, to_label);
                 let from_index = from_label as usize + 1;
                 let to_index = to_label as usize + 1;
@@ -1150,8 +1133,7 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
             }
         }
     }
-    loss_computer.finalize(&state, &cms);
-    let expected_loss = loss_computer.compute_loss();
+    let expected_loss = loss_computer.compute_loss(&state, &cms);
     let labels = state.standardize().iter().map(|x| *x as usize).collect();
     (labels, expected_loss, scan_counter, 0.0, 1)
 }
