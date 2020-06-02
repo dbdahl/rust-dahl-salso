@@ -1057,12 +1057,42 @@ impl<'a> LossComputer for VILossComputer<'a> {
 
 // Version 2 implementation
 
+pub struct SALSOResults {
+    clustering: Vec<usize>,
+    expected_loss: f64,
+    n_scans: u32,
+    prob_exploration: f64,
+    n_permutations: u32,
+}
+
+impl SALSOResults {
+    pub fn new(
+        clustering: Vec<usize>,
+        expected_loss: f64,
+        n_scans: u32,
+        prob_exploration: f64,
+        n_permutations: u32,
+    ) -> Self {
+        Self {
+            clustering,
+            expected_loss,
+            n_scans,
+            prob_exploration,
+            n_permutations,
+        }
+    }
+
+    pub fn dummy() -> Self {
+        SALSOResults::new(vec![0usize; 0], std::f64::INFINITY, 0, 0.0, 0)
+    }
+}
+
 pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
     p: SALSOParameters,
     rng: &mut U,
-) -> (Vec<usize>, f64, u32, f64, u32) {
+) -> SALSOResults {
     let n_items = draws.n_items();
     let mut state = random_state(n_items, rng);
     let max_size = match p.max_size {
@@ -1126,7 +1156,7 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     }
     let expected_loss = loss_computer.compute_loss(&state, &cms);
     let labels = state.standardize().iter().map(|x| *x as usize).collect();
-    (labels, expected_loss, scan_counter, 0.0, 1)
+    SALSOResults::new(labels, expected_loss, scan_counter, 0.0, 1)
 }
 
 // General algorithm
@@ -1206,7 +1236,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     computer_factory: Box<dyn Fn() -> U + 'a>,
     p: SALSOParameters,
     rng: &mut T,
-) -> (Vec<usize>, f64, u32, f64, u32) {
+) -> SALSOResults {
     let max_label = if p.max_size == 0 {
         LabelType::max_value()
     } else {
@@ -1302,7 +1332,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     // Canonicalize the labels
     global_best.canonicalize();
     let labels = global_best.labels_via_copying();
-    (
+    SALSOResults::new(
         labels,
         global_minimum,
         global_n_scans,
@@ -1319,13 +1349,13 @@ pub fn minimize_by_salso<T: Rng>(
     nanoseconds: u32,
     parallel: bool,
     mut rng: &mut T,
-) -> ((Vec<usize>, f64, u32, f64, u32), bool) {
+) -> (SALSOResults, bool) {
     let cache = Log2Cache::new(if let LossFunction::VI = loss_function {
         p.n_items
     } else {
         0
     });
-    let mut global_best = (Vec::new(), f64::INFINITY, 0, 0.0, 0);
+    let mut global_best = SALSOResults::dummy();
     let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
     loop {
         let result = if !parallel {
@@ -1411,15 +1441,15 @@ pub fn minimize_by_salso<T: Rng>(
             })
             .unwrap();
             std::mem::drop(tx); // Because of the cloning in the loop.
-            let mut working_best = (vec![0usize; p.n_items], std::f64::INFINITY, 0, 0.0, 0);
+            let mut working_best = SALSOResults::dummy();
             let mut permutations_counter = 0;
             for candidate in rx {
-                permutations_counter += candidate.4;
-                if candidate.1 < working_best.1 {
+                permutations_counter += candidate.n_permutations;
+                if candidate.expected_loss < working_best.expected_loss {
                     working_best = candidate;
                 }
             }
-            working_best.4 = permutations_counter;
+            working_best.n_permutations = permutations_counter;
             working_best
         };
         let fix_expected_loss = |kernel: f64| -> f64 {
@@ -1433,16 +1463,18 @@ pub fn minimize_by_salso<T: Rng>(
                 _ => kernel,
             }
         };
-        if result.1 >= global_best.1 || result.0 == global_best.0 {
-            global_best.4 += result.4;
-            global_best.1 = fix_expected_loss(global_best.1);
+        if result.expected_loss >= global_best.expected_loss
+            || result.clustering == global_best.clustering
+        {
+            global_best.n_permutations += result.n_permutations;
+            global_best.expected_loss = fix_expected_loss(global_best.expected_loss);
             return (global_best, false);
         }
-        let previous_count = global_best.4;
+        let previous_count = global_best.n_permutations;
         global_best = result;
-        global_best.4 += previous_count;
+        global_best.n_permutations += previous_count;
         if std::time::SystemTime::now() > stop_time {
-            global_best.1 = fix_expected_loss(global_best.1);
+            global_best.expected_loss = fix_expected_loss(global_best.expected_loss);
             return (global_best, true);
         }
     }
@@ -1582,16 +1614,16 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         probability_of_exploration_shape,
         probability_of_exploration_rate,
     };
-    let ((minimizer, expected_loss, scans, actual_pr_explore, n_permutations), curtailed) =
+    let (results, curtailed) =
         minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
-    for (i, v) in minimizer.iter().enumerate() {
+    for (i, v) in results.clustering.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
-    *results_expected_loss_ptr = expected_loss;
-    *results_scans_ptr = i32::try_from(scans).unwrap();
-    *results_pr_explore_ptr = f64::try_from(actual_pr_explore).unwrap();
-    *results_n_permutations_ptr = i32::try_from(n_permutations).unwrap();
+    *results_expected_loss_ptr = results.expected_loss;
+    *results_scans_ptr = i32::try_from(results.n_scans).unwrap();
+    *results_pr_explore_ptr = f64::try_from(results.prob_exploration).unwrap();
+    *results_n_permutations_ptr = i32::try_from(results.n_permutations).unwrap();
     *results_curtailed_ptr = i32::try_from(curtailed).unwrap();
 }
 
