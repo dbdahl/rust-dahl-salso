@@ -2,6 +2,9 @@ use dahl_partition::*;
 
 use crate::clustering::Clusterings;
 use crate::confusion::{ConfusionMatrices, Log2Cache};
+use crate::optimize::{
+    BinderLossComputer, LossComputer, OMARILossComputer, VILossComputer, WorkingClustering,
+};
 use crate::*;
 use std::slice;
 
@@ -55,6 +58,27 @@ pub fn binder_multiple(
             }
         }
         unsafe { *results.get_unchecked_mut(k) = multiplier * (sum + sum_p) };
+    }
+}
+
+pub fn compute_loss_multiple<'a, T: LossComputer>(
+    loss_computer_factory: Box<dyn Fn() -> T + 'a>,
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let n_items = partitions.n_items();
+    assert_eq!(n_items, draws.n_items());
+    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
+    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
+    for k in 0..clusterings.n_clusterings() {
+        let mut loss_computer = loss_computer_factory();
+        let state =
+            WorkingClustering::from_slice(clusterings.labels(k), clusterings.max_clusters());
+        let cms = draws.make_confusion_matrices(&state);
+        loss_computer.initialize(&state, &cms);
+        loss_computer.finalize(&state, &cms);
+        unsafe { *results.get_unchecked_mut(k) = loss_computer.compute_loss() };
     }
 }
 
@@ -328,10 +352,28 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let loss_function = LossFunction::from_code(loss);
     match loss_function {
         Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
-        Some(LossFunction::Binder2) => panic!("No implementation for binder2."),
-        Some(LossFunction::OneMinusARI) => omari_multiple(&partitions, &draws, results),
+        Some(LossFunction::Binder2) => compute_loss_multiple(
+            Box::new(|| BinderLossComputer::new()),
+            &partitions,
+            &draws,
+            results,
+        ),
+        Some(LossFunction::OneMinusARI) => compute_loss_multiple(
+            Box::new(|| OMARILossComputer::new(nd)),
+            &partitions,
+            &draws,
+            results,
+        ),
         Some(LossFunction::OneMinusARIapprox) => omariapprox_multiple(&partitions, &psm, results),
-        Some(LossFunction::VI) => vi_multiple(&partitions, &draws, results),
+        Some(LossFunction::VI) => {
+            let cache = Log2Cache::new(ni);
+            compute_loss_multiple(
+                Box::new(|| VILossComputer::new(&cache)),
+                &partitions,
+                &draws,
+                results,
+            )
+        }
         Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
         None => panic!("Unsupported loss method: {}", loss),
     };

@@ -3,7 +3,7 @@ extern crate num_cpus;
 extern crate num_traits;
 extern crate rand;
 
-use self::ndarray::{Array3, Axis};
+use self::ndarray::{Array2, Array3, Axis};
 use crate::clustering::Clusterings;
 use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::loss::*;
@@ -16,6 +16,7 @@ use rand::SeedableRng;
 use rand_distr::{Distribution, Gamma};
 use rand_isaac::IsaacRng;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::f64;
 use std::slice;
@@ -594,7 +595,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 // Alternative
 
 #[derive(Debug)]
-struct WorkingClustering {
+pub struct WorkingClustering {
     labels: Vec<LabelType>,
     max_clusters: LabelType,
     sizes: Vec<CountType>,
@@ -658,6 +659,22 @@ impl WorkingClustering {
                 }
             }
         }
+    }
+
+    pub fn standardize(&self) -> Vec<LabelType> {
+        let n_items = self.labels.len();
+        let mut labels = Vec::with_capacity(n_items);
+        let mut map = HashMap::new();
+        let mut next_new_label = 0;
+        for j in 0..n_items {
+            let c = *map.entry(self.labels[j]).or_insert_with(|| {
+                let c = next_new_label;
+                next_new_label += 1;
+                c
+            });
+            labels.push(c);
+        }
+        labels
     }
 
     pub fn max_clusters(&self) -> LabelType {
@@ -748,38 +765,343 @@ fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> WorkingClustering {
     )
 }
 
-fn delta_binder(
-    item_index: usize,
-    to_label: LabelType,
-    from_label: LabelType,
-    state: &WorkingClustering,
-    draws: &Clusterings,
-    cms: &Array3<CountType>,
-) -> f64 {
-    let offset = if from_label == to_label { 1 } else { 0 };
-    let n_draws = cms.len_of(Axis(2));
-    let n2 = (state.sizes[to_label as usize] - offset) as f64;
-    let mut sum = (n_draws as f64) * n2;
-    let to_index = to_label as usize + 1;
-    for draw_index in 0..n_draws {
-        let other_index = draws.label(draw_index, item_index) as usize;
-        let n1 = (cms[(0, other_index, draw_index)] - offset) as f64;
-        if n1 > 0.0 {
-            let n12 = (cms[(to_index, other_index, draw_index)] - offset) as f64;
-            sum += n1 - 2.0 * n12;
-        }
-    }
-    sum
+pub trait LossComputer {
+    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>);
+
+    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>);
+
+    fn compute_loss(&self) -> f64;
+
+    fn change_in_loss(
+        &mut self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label: LabelType,
+        state: &WorkingClustering,
+        draws: &Clusterings,
+        cms: &Array3<CountType>,
+    ) -> f64;
+
+    fn decision_callback(
+        &mut self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label: LabelType,
+        state: &WorkingClustering,
+        draws: &Clusterings,
+        cms: &Array3<CountType>,
+    );
 }
 
-pub fn minimize_once_by_salso_binder<'a, T: Rng>(
+// binder
+
+pub(crate) struct BinderLossComputer {
+    loss: f64,
+}
+
+impl BinderLossComputer {
+    pub fn new() -> Self {
+        Self { loss: 0.0 }
+    }
+
+    pub fn n_squared(x: CountType) -> f64 {
+        let x = x as f64;
+        x * x
+    }
+}
+
+impl LossComputer for BinderLossComputer {
+    fn initialize(&mut self, _state: &WorkingClustering, _cms: &Array3<CountType>) {}
+
+    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+        let mut sum: f64 = state
+            .occupied_clusters
+            .iter()
+            .map(|i| BinderLossComputer::n_squared(state.sizes[*i as usize]))
+            .sum();
+        let n_draws = cms.len_of(Axis(2));
+        sum *= n_draws as f64;
+        for draw_index in 0..n_draws {
+            for other_index in 0..cms.len_of(Axis(1)) {
+                let n = cms[(0, other_index, draw_index)];
+                if n > 0 {
+                    sum += BinderLossComputer::n_squared(cms[(0, other_index, draw_index)]);
+                    for main_label in state.occupied_clusters.iter() {
+                        sum -= 2.0
+                            * BinderLossComputer::n_squared(
+                                cms[(*main_label as usize + 1, other_index, draw_index)],
+                            );
+                    }
+                }
+            }
+        }
+        self.loss =
+            sum / (n_draws as f64 * BinderLossComputer::n_squared(state.labels.len() as CountType));
+    }
+
+    fn compute_loss(&self) -> f64 {
+        self.loss
+    }
+
+    fn change_in_loss(
+        &mut self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label: LabelType,
+        state: &WorkingClustering,
+        draws: &Clusterings,
+        cms: &Array3<CountType>,
+    ) -> f64 {
+        let offset = if from_label == to_label { 1 } else { 0 };
+        let n_draws = cms.len_of(Axis(2));
+        let n2 = (state.sizes[to_label as usize] - offset) as f64;
+        let mut sum = (n_draws as f64) * n2;
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let n1 = (cms[(0, other_index, draw_index)] - offset) as f64;
+            if n1 > 0.0 {
+                let n12 = (cms[(to_index, other_index, draw_index)] - offset) as f64;
+                sum += n1 - 2.0 * n12;
+            }
+        }
+        sum
+    }
+
+    fn decision_callback(
+        &mut self,
+        _item_index: usize,
+        _to_label: LabelType,
+        _from_label: LabelType,
+        _state: &WorkingClustering,
+        _draws: &Clusterings,
+        _cms: &Array3<CountType>,
+    ) {
+    }
+}
+
+// omARI
+
+pub struct OMARILossComputer {
+    n: CountType,
+    sum2: f64,
+    sums: Array2<f64>,
+}
+
+impl OMARILossComputer {
+    pub fn new(n_draws: usize) -> Self {
+        Self {
+            n: 0,
+            sum2: 0.0,
+            sums: Array2::<f64>::zeros((n_draws, 2)),
+        }
+    }
+
+    pub fn n_choose_2_times_2(x: CountType) -> f64 {
+        let x = x as f64;
+        x * (x - 1.0)
+    }
+}
+
+impl LossComputer for OMARILossComputer {
+    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+        self.n = state.labels.len() as CountType;
+        self.sum2 = state
+            .occupied_clusters
+            .iter()
+            .map(|i| OMARILossComputer::n_choose_2_times_2(state.sizes[*i as usize]))
+            .sum();
+        let n_draws = cms.len_of(Axis(2));
+        for draw_index in 0..n_draws {
+            for other_index in 0..cms.len_of(Axis(1)) {
+                let n = cms[(0, other_index, draw_index)];
+                if n > 0 {
+                    self.sums[(draw_index, 0)] += OMARILossComputer::n_choose_2_times_2(n);
+                    for main_label in state.occupied_clusters.iter() {
+                        self.sums[(draw_index, 1)] += OMARILossComputer::n_choose_2_times_2(
+                            cms[(*main_label as usize + 1, other_index, draw_index)],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+        // DBD:  This is a hack since compute_loss isn't working.
+        self.n = 0;
+        self.sum2 = 0.0;
+        self.sums = Array2::<f64>::zeros((cms.len_of(Axis(2)), 2));
+        self.initialize(state, cms);
+    }
+
+    fn compute_loss(&self) -> f64 {
+        let mut sum = 0.0;
+        let sum2 = self.sum2;
+        let n_draws = self.sums.len_of(Axis(0));
+        for draw_index in 0..n_draws {
+            let sum1 = self.sums[(draw_index, 0)];
+            let offset = sum1 * sum2 / OMARILossComputer::n_choose_2_times_2(self.n);
+            sum += (self.sums[(draw_index, 1)] - offset) / (0.5 * (sum1 + sum2) - offset);
+        }
+        1.0 - sum / (n_draws as f64)
+    }
+
+    fn change_in_loss(
+        &mut self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label: LabelType,
+        state: &WorkingClustering,
+        draws: &Clusterings,
+        cms: &Array3<CountType>,
+    ) -> f64 {
+        let offset = if from_label == to_label { 1 } else { 0 };
+        let n_draws = cms.len_of(Axis(2));
+        let n2 = (state.sizes[to_label as usize] - offset) as f64;
+        let nf = self.n as f64;
+        let mut sum = 0.0;
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..n_draws {
+            let mut temp = self.sum2 + n2;
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let n1 = (cms[(0, other_index, draw_index)] - offset) as f64;
+            if n1 > 0.0 {
+                let n12 = (cms[(to_index, other_index, draw_index)] - offset) as f64;
+                temp += self.sums[(draw_index, 0)] + n1 - 2.0 * (self.sums[(draw_index, 1)] + n12);
+            }
+            temp /= 0.5 * (self.sum2 + n2 + self.sums[(draw_index, 0)] + n1)
+                - (self.sum2 + n2) * (self.sums[(draw_index, 0)] + n1) / ((nf + 1.0) * nf / 2.0);
+            sum += temp;
+        }
+        sum
+    }
+
+    fn decision_callback(
+        &mut self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label: LabelType,
+        state: &WorkingClustering,
+        draws: &Clusterings,
+        cms: &Array3<CountType>,
+    ) {
+        let n_draws = cms.len_of(Axis(2));
+        let n2 = state.sizes[to_label as usize] as f64;
+        self.sum2 += n2;
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let n1 = cms[(0, other_index, draw_index)] as f64;
+            if n1 > 0.0 {
+                self.sums[(draw_index, 0)] += n1;
+                let n12 = cms[(to_index, other_index, draw_index)] as f64;
+                self.sums[(draw_index, 1)] += n12;
+            }
+        }
+    }
+}
+
+// VI
+
+pub struct VILossComputer<'a> {
+    loss: f64,
+    cache: &'a Log2Cache,
+}
+
+impl<'a> VILossComputer<'a> {
+    pub fn new(cache: &'a Log2Cache) -> Self {
+        Self { loss: 0.0, cache }
+    }
+}
+
+impl<'a> LossComputer for VILossComputer<'a> {
+    fn initialize(&mut self, _state: &WorkingClustering, _cms: &Array3<CountType>) {}
+
+    fn finalize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+        let sum2: f64 = state
+            .occupied_clusters
+            .iter()
+            .map(|i| self.cache.nlog2n(state.sizes[*i as usize]))
+            .sum();
+        let n_draws = cms.len_of(Axis(2));
+        let mut sum = 0.0;
+        for draw_index in 0..n_draws {
+            let mut vi = 0.0;
+            for other_index in 0..cms.len_of(Axis(1)) {
+                let n = cms[(0, other_index, draw_index)];
+                if n > 0 {
+                    vi += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
+                    for main_label in state.occupied_clusters.iter() {
+                        vi -= 2.0
+                            * self
+                                .cache
+                                .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
+                    }
+                }
+            }
+            sum += (vi + sum2) / (state.labels.len() as f64);
+        }
+        self.loss = sum / (n_draws as f64)
+    }
+
+    fn compute_loss(&self) -> f64 {
+        self.loss
+    }
+
+    fn change_in_loss(
+        &mut self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label: LabelType,
+        state: &WorkingClustering,
+        draws: &Clusterings,
+        cms: &Array3<CountType>,
+    ) -> f64 {
+        let offset = if from_label == to_label { 1 } else { 0 };
+        let n_draws = cms.len_of(Axis(2));
+        let n2 = state.sizes[to_label as usize] - offset;
+        let mut sum = (n_draws as f64) * self.cache.nlog2n_difference(n2);
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let n1 = cms[(0, other_index, draw_index)] - offset;
+            if n1 > 0 {
+                let n12 = cms[(to_index, other_index, draw_index)] - offset;
+                sum += self.cache.nlog2n_difference(n1) - 2.0 * self.cache.nlog2n_difference(n12);
+            }
+        }
+        sum
+    }
+
+    fn decision_callback(
+        &mut self,
+        _item_index: usize,
+        _to_label: LabelType,
+        _from_label: LabelType,
+        _state: &WorkingClustering,
+        _draws: &Clusterings,
+        _cms: &Array3<CountType>,
+    ) {
+    }
+}
+
+// Version 2 implementation
+
+pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
+    loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
     p: SALSOParameters,
-    rng: &mut T,
+    rng: &mut U,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
     let n_items = draws.n_items();
     //let mut state = random_state(n_items, rng);
-    let mut state = WorkingClustering::one_cluster(n_items, p.max_label + 1);
+    let max_size = match p.max_size {
+        0 | 1 => draws.max_clusters(),
+        _ => p.max_size,
+    };
+    println!("max size: {}", max_size);
+    let mut state = WorkingClustering::one_cluster(n_items, max_size);
     let mut cms = Array3::<CountType>::zeros((
         state.max_clusters() as usize + 1,
         draws.max_clusters() as usize,
@@ -793,6 +1115,8 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
             cms[(state_index, other_index, draw_index)] += 1;
         }
     }
+    let mut loss_computer = loss_computer_factory();
+    loss_computer.initialize(&state, &cms);
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut scan_counter = 0;
     let mut state_changed = true;
@@ -811,11 +1135,15 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
                 .map(|to_label| {
                     (
                         *to_label,
-                        delta_binder(item_index, *to_label, from_label, &state, &draws, &cms),
+                        loss_computer.change_in_loss(
+                            item_index, *to_label, from_label, &state, &draws, &cms,
+                        ),
                     )
                 });
             let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
             if to_label != from_label {
+                loss_computer
+                    .decision_callback(item_index, to_label, from_label, &state, &draws, &cms);
                 state.reassign(item_index, to_label);
                 let from_index = from_label as usize + 1;
                 let to_index = to_label as usize + 1;
@@ -828,8 +1156,10 @@ pub fn minimize_once_by_salso_binder<'a, T: Rng>(
             }
         }
     }
-    let labels = state.labels.iter().map(|x| *x as usize).collect();
-    (labels, 0., scan_counter, 0.0, 1)
+    loss_computer.finalize(&state, &cms);
+    let expected_loss = loss_computer.compute_loss();
+    let labels = state.standardize().iter().map(|x| *x as usize).collect();
+    (labels, expected_loss, scan_counter, 0.0, 1)
 }
 
 // General algorithm
@@ -897,7 +1227,7 @@ fn micro_optimized_allocation<T: Rng, U: Computer>(
 #[derive(Debug, Copy, Clone)]
 pub struct SALSOParameters {
     n_items: usize,
-    max_label: LabelType,
+    max_size: LabelType,
     max_scans: u32,
     n_permutations: u32,
     probability_of_exploration_probability_at_zero: f64,
@@ -910,6 +1240,11 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     p: SALSOParameters,
     rng: &mut T,
 ) -> (Vec<usize>, f64, u32, f64, u32) {
+    let max_label = if p.max_size == 0 {
+        LabelType::max_value()
+    } else {
+        p.max_size - 1
+    };
     let probability_of_exploration_distribution = Gamma::new(
         p.probability_of_exploration_shape,
         1.0 / p.probability_of_exploration_rate,
@@ -941,7 +1276,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
                 }
             };
         for i in 0..p.n_items {
-            ensure_empty_subset(&mut partition, &mut computer, p.max_label);
+            ensure_empty_subset(&mut partition, &mut computer, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
             micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
         }
@@ -970,7 +1305,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
                 }
             };
             for i in 0..p.n_items {
-                ensure_empty_subset(&mut partition, &mut computer, p.max_label);
+                ensure_empty_subset(&mut partition, &mut computer, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = computer.remove(&mut partition, ii);
                 let subset_index =
@@ -1031,12 +1366,15 @@ pub fn minimize_by_salso<T: Rng>(
                 LossFunction::Binder => {
                     minimize_once_by_salso(Box::new(|| BinderComputer::new(pdi.psm())), p, rng)
                 }
-                LossFunction::Binder2 => {
-                    minimize_once_by_salso_binder(pdi.draws(), p, rng)
-                    // minimize_once_by_salso(Box::new(|| Binder2Computer::new(pdi.draws())), p, rng)
-                }
-                LossFunction::OneMinusARI => minimize_once_by_salso(
-                    Box::new(|| OneMinusARIComputer::new(pdi.draws())),
+                LossFunction::Binder2 => minimize_once_by_salso_v2(
+                    Box::new(|| BinderLossComputer::new()),
+                    pdi.draws(),
+                    p,
+                    rng,
+                ),
+                LossFunction::OneMinusARI => minimize_once_by_salso_v2(
+                    Box::new(|| OMARILossComputer::new(pdi.draws().n_clusterings())),
+                    pdi.draws(),
                     p,
                     rng,
                 ),
@@ -1045,8 +1383,9 @@ pub fn minimize_by_salso<T: Rng>(
                     p,
                     rng,
                 ),
-                LossFunction::VI => minimize_once_by_salso(
-                    Box::new(|| VarOfInfoComputer::new(pdi.draws(), &cache)),
+                LossFunction::VI => minimize_once_by_salso_v2(
+                    Box::new(|| VILossComputer::new(&cache)),
+                    pdi.draws(),
                     p,
                     rng,
                 ),
@@ -1192,7 +1531,7 @@ mod tests_optimize {
         let psm_view = &psm.view();
         let p = SALSOParameters {
             n_items,
-            max_label: 2,
+            max_size: 2,
             max_scans: 10,
             n_permutations: 100,
             probability_of_exploration_probability_at_zero: 0.5,
@@ -1269,11 +1608,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     };
     let p = SALSOParameters {
         n_items,
-        max_label: if max_size == 0 {
-            LabelType::max_value()
-        } else {
-            max_size - 1
-        },
+        max_size,
         max_scans,
         n_permutations,
         probability_of_exploration_probability_at_zero,

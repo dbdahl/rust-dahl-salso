@@ -1,5 +1,7 @@
 use crate::*;
 
+use crate::optimize::WorkingClustering;
+use ndarray::Array3;
 use std::collections::HashMap;
 
 pub struct Clusterings {
@@ -42,6 +44,23 @@ impl Clusterings {
             n_clusters,
             max_clusters,
         }
+    }
+
+    pub fn make_confusion_matrices(&self, state: &WorkingClustering) -> Array3<CountType> {
+        let mut cms = Array3::<CountType>::zeros((
+            state.max_clusters() as usize + 1,
+            self.max_clusters() as usize,
+            self.n_clusterings(),
+        ));
+        for item_index in 0..self.n_items {
+            let state_index = state.get(item_index) as usize + 1;
+            for draw_index in 0..self.n_clusterings() {
+                let other_index = self.label(draw_index, item_index) as usize;
+                cms[(0, other_index, draw_index)] += 1;
+                cms[(state_index, other_index, draw_index)] += 1;
+            }
+        }
+        cms
     }
 
     pub fn n_clusterings(&self) -> usize {
