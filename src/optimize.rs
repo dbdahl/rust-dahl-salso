@@ -594,7 +594,7 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 
 // Alternative
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkingClustering {
     labels: Vec<LabelType>,
     max_clusters: LabelType,
@@ -852,9 +852,25 @@ impl LossComputer for BinderLossComputer {
         draws: &Clusterings,
         cms: &Array3<CountType>,
     ) -> f64 {
+        let mut state = state.clone();
+        let mut cms = cms.clone();
+        state.reassign(item_index, to_label);
+        let n_draws = cms.len_of(Axis(2));
+        for draw_index in 0..n_draws {
+            let other_label = draws.label(draw_index, item_index);
+            cms[(to_label as usize + 1, other_label as usize, draw_index)] += 1;
+            cms[(from_label as usize + 1, other_label as usize, draw_index)] -= 1;
+        }
+        self.finalize(&state, &cms);
+        self.compute_loss()
+        /*
         let offset = if from_label == to_label { 1 } else { 0 };
         let n_draws = cms.len_of(Axis(2));
-        let n2 = (state.sizes[to_label as usize] - offset) as f64;
+        let n2 = (state
+            .occupied_clusters
+            .iter()
+            .map(|i| state.sizes[*i as usize] - offset)
+            .sum::<CountType>()) as f64;
         let mut sum = (n_draws as f64) * n2;
         let to_index = to_label as usize + 1;
         for draw_index in 0..n_draws {
@@ -866,6 +882,7 @@ impl LossComputer for BinderLossComputer {
             }
         }
         sum
+        */
     }
 
     fn decision_callback(
