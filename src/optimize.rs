@@ -603,6 +603,19 @@ pub struct WorkingClustering {
 }
 
 impl WorkingClustering {
+    pub fn empty(n_items: usize, max_clusters: LabelType) -> Self {
+        let max_clusters = max_clusters.max(2);
+        let sizes = vec![0; max_clusters as usize];
+        let occupied_clusters = Vec::with_capacity(max_clusters as usize);
+        Self {
+            labels: vec![0; n_items],
+            max_clusters,
+            sizes,
+            occupied_clusters,
+            potentially_empty_label: 0,
+        }
+    }
+
     pub fn one_cluster(n_items: usize, max_clusters: LabelType) -> Self {
         let max_clusters = max_clusters.max(2);
         let mut sizes = vec![0; max_clusters as usize];
@@ -616,6 +629,17 @@ impl WorkingClustering {
             occupied_clusters,
             potentially_empty_label: 1,
         }
+    }
+
+    pub fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> Self {
+        Self::from_vector(
+            {
+                let mut v = Vec::with_capacity(n_items);
+                v.resize_with(n_items, || rng.gen_range(0, n_items as LabelType));
+                v
+            },
+            n_items as LabelType,
+        )
     }
 
     pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
@@ -753,17 +777,6 @@ impl WorkingClustering {
     }
 }
 
-fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> WorkingClustering {
-    WorkingClustering::from_vector(
-        {
-            let mut v = Vec::with_capacity(n_items);
-            v.resize_with(n_items, || rng.gen_range(0, n_items as LabelType));
-            v
-        },
-        n_items as LabelType,
-    )
-}
-
 pub trait LossComputer {
     #[allow(unused_variables)]
     fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {}
@@ -774,12 +787,12 @@ pub trait LossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: LabelType,
+        from_label: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        if to_label == from_label {
+        if from_label.is_some() && to_label == from_label.unwrap() {
             self.compute_loss(&state, &cms)
         } else {
             let mut state = state.clone();
@@ -789,7 +802,9 @@ pub trait LossComputer {
             for draw_index in 0..n_draws {
                 let other_index = draws.label(draw_index, item_index) as usize;
                 cms[(to_label as usize + 1, other_index, draw_index)] += 1;
-                cms[(from_label as usize + 1, other_index, draw_index)] -= 1;
+                if from_label.is_some() {
+                    cms[(from_label.unwrap() as usize + 1, other_index, draw_index)] -= 1;
+                }
             }
             self.compute_loss(&state, &cms)
         }
@@ -853,12 +868,16 @@ impl LossComputer for BinderLossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: LabelType,
+        from_label: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        let offset = if from_label == to_label { 1 } else { 0 };
+        let offset = if from_label.is_some() && to_label == from_label.unwrap() {
+            1
+        } else {
+            0
+        };
         let n_draws = cms.len_of(Axis(2));
         let to_index = to_label as usize + 1;
         let mut sum = (n_draws as f64) * ((state.sizes[to_index - 1] - offset) as f64) / 2.0;
@@ -938,12 +957,16 @@ impl LossComputer for OMARILossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: LabelType,
+        from_label: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        let offset = if from_label == to_label { 1 } else { 0 };
+        let offset = if from_label.is_some() && to_label == from_label.unwrap() {
+            1
+        } else {
+            0
+        };
         let n_draws = cms.len_of(Axis(2));
         let n2 = (state.sizes[to_label as usize] - offset) as f64;
         let nf = self.n as f64;
@@ -968,7 +991,7 @@ impl LossComputer for OMARILossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: LabelType,
+        _from_label: LabelType,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
@@ -1033,12 +1056,16 @@ impl<'a> LossComputer for VILossComputer<'a> {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: LabelType,
+        from_label: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        let offset = if from_label == to_label { 1 } else { 0 };
+        let offset = if from_label.is_some() && to_label == from_label.unwrap() {
+            1
+        } else {
+            0
+        };
         let n_draws = cms.len_of(Axis(2));
         let to_index = to_label as usize + 1;
         let mut sum = (n_draws as f64)
@@ -1094,28 +1121,45 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     rng: &mut U,
 ) -> SALSOResults {
     let n_items = draws.n_items();
-    let mut state = random_state(n_items, rng);
     let max_size = match p.max_size {
         0 | 1 => draws.max_clusters(),
         _ => p.max_size,
     };
-    // let mut state = WorkingClustering::one_cluster(n_items, max_size);
+    let mut state = WorkingClustering::empty(n_items, max_size);
     let mut cms = Array3::<CountType>::zeros((
         state.max_clusters() as usize + 1,
         draws.max_clusters() as usize,
         draws.n_clusterings(),
     ));
-    for item_index in 0..n_items {
-        let state_index = state.get(item_index) as usize + 1;
-        for draw_index in 0..draws.n_clusterings() {
-            let other_index = draws.label(draw_index, item_index) as usize;
-            cms[(0, other_index, draw_index)] += 1;
-            cms[(state_index, other_index, draw_index)] += 1;
-        }
-    }
     let mut loss_computer = loss_computer_factory();
     loss_computer.initialize(&state, &cms);
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
+    // Sequential allocation
+    permutation.shuffle(rng);
+    for item_index in &permutation {
+        let item_index = *item_index;
+        let label_of_empty_cluster = state.label_of_empty_cluster();
+        let iter = state
+            .occupied_clusters
+            .iter()
+            .chain(label_of_empty_cluster.iter())
+            .map(|to_label| {
+                (
+                    *to_label,
+                    loss_computer.change_in_loss(item_index, *to_label, None, &state, &cms, &draws),
+                )
+            });
+        let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
+        // loss_computer.decision_callback(item_index, to_label, from_label, &state, &cms, &draws);
+        state.assign(item_index, to_label);
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..draws.n_clusterings() {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            cms[(0, other_index, draw_index)] += 1;
+            cms[(to_index, other_index, draw_index)] += 1;
+        }
+    }
+    // Sweetening
     let mut scan_counter = 0;
     let mut state_changed = true;
     while state_changed && scan_counter < p.max_scans {
@@ -1134,7 +1178,12 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
                     (
                         *to_label,
                         loss_computer.change_in_loss(
-                            item_index, *to_label, from_label, &state, &cms, &draws,
+                            item_index,
+                            *to_label,
+                            Some(from_label),
+                            &state,
+                            &cms,
+                            &draws,
                         ),
                     )
                 });
