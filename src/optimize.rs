@@ -21,6 +21,7 @@ use std::convert::TryFrom;
 use std::f64;
 use std::slice;
 use std::sync::mpsc;
+use std::time::{Duration, SystemTime};
 
 fn cmp_f64(a: &f64, b: &f64) -> Ordering {
     if a.is_nan() {
@@ -1186,6 +1187,7 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
     p: SALSOParameters,
+    stop_time: &SystemTime,
     rng: &mut U,
 ) -> SALSOResults {
     let n_items = draws.n_items();
@@ -1195,7 +1197,7 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy();
-    for _ in 0..p.n_permutations {
+    for permutation_counter in 1..=p.n_permutations {
         let mut state = WorkingClustering::empty(n_items, max_size);
         let mut cms = Array3::<CountType>::zeros((
             state.max_clusters() as usize + 1,
@@ -1239,6 +1241,10 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
                 n_scans: scan_counter,
                 ..best
             }
+        }
+        if SystemTime::now() > *stop_time {
+            best.n_permutations = permutation_counter;
+            return best;
         }
     }
     best.n_permutations = p.n_permutations;
@@ -1321,6 +1327,7 @@ pub struct SALSOParameters {
 pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     computer_factory: Box<dyn Fn() -> U + 'a>,
     p: SALSOParameters,
+    stop_time: &SystemTime,
     rng: &mut T,
 ) -> SALSOResults {
     let max_label = if p.max_size == 0 {
@@ -1414,6 +1421,17 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             global_pr_explore = pr_explore;
         }
         permutations_counter += 1;
+        if SystemTime::now() > *stop_time {
+            global_best.canonicalize();
+            let labels = global_best.labels_via_copying();
+            return SALSOResults::new(
+                labels,
+                global_minimum,
+                global_n_scans,
+                global_pr_explore,
+                permutations_counter,
+            );
+        }
     }
     // Canonicalize the labels
     global_best.canonicalize();
@@ -1435,135 +1453,136 @@ pub fn minimize_by_salso<T: Rng>(
     nanoseconds: u32,
     parallel: bool,
     mut rng: &mut T,
-) -> (SALSOResults, bool) {
+) -> SALSOResults {
     let cache = Log2Cache::new(if let LossFunction::VI = loss_function {
         p.n_items
     } else {
         0
     });
-    let mut global_best = SALSOResults::dummy();
-    let stop_time = std::time::SystemTime::now() + std::time::Duration::new(seconds, nanoseconds);
-    loop {
-        let result = if !parallel {
-            match loss_function {
-                LossFunction::Binder => {
-                    minimize_once_by_salso(Box::new(|| BinderComputer::new(pdi.psm())), p, rng)
-                }
-                LossFunction::Binder2 => minimize_once_by_salso_v2(
-                    Box::new(|| BinderLossComputer::new()),
-                    pdi.draws(),
-                    p,
-                    rng,
-                ),
-                LossFunction::OneMinusARI => minimize_once_by_salso_v2(
-                    Box::new(|| OMARILossComputer::new(pdi.draws().n_clusterings())),
-                    pdi.draws(),
-                    p,
-                    rng,
-                ),
-                LossFunction::OneMinusARIapprox => minimize_once_by_salso(
-                    Box::new(|| OneMinusARIapproxComputer::new(pdi.psm())),
-                    p,
-                    rng,
-                ),
-                LossFunction::VI => minimize_once_by_salso_v2(
-                    Box::new(|| VILossComputer::new(&cache)),
-                    pdi.draws(),
-                    p,
-                    rng,
-                ),
-                LossFunction::VIlb => {
-                    minimize_once_by_salso(Box::new(|| VarOfInfoLBComputer::new(pdi.psm())), p, rng)
-                }
-            }
-        } else {
-            let (tx, rx) = mpsc::channel();
-            let n_cores = num_cpus::get() as u32;
-            let p = SALSOParameters {
-                n_permutations: (p.n_permutations + n_cores - 1) / n_cores,
-                ..p
-            };
-            let cache_ref = &cache;
-            crossbeam::scope(|s| {
-                for _ in 0..n_cores {
-                    let tx = mpsc::Sender::clone(&tx);
-                    let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
-                    s.spawn(move |_| {
-                        let result = match loss_function {
-                            LossFunction::Binder => minimize_once_by_salso(
-                                Box::new(|| BinderComputer::new(pdi.psm())),
-                                p,
-                                &mut child_rng,
-                            ),
-                            LossFunction::Binder2 => minimize_once_by_salso(
-                                Box::new(|| Binder2Computer::new(pdi.draws())),
-                                p,
-                                &mut child_rng,
-                            ),
-                            LossFunction::OneMinusARI => minimize_once_by_salso(
-                                Box::new(|| OneMinusARIComputer::new(pdi.draws())),
-                                p,
-                                &mut child_rng,
-                            ),
-                            LossFunction::OneMinusARIapprox => minimize_once_by_salso(
-                                Box::new(|| OneMinusARIapproxComputer::new(pdi.psm())),
-                                p,
-                                &mut child_rng,
-                            ),
-                            LossFunction::VI => minimize_once_by_salso(
-                                Box::new(|| VarOfInfoComputer::new(pdi.draws(), cache_ref)),
-                                p,
-                                &mut child_rng,
-                            ),
-                            LossFunction::VIlb => minimize_once_by_salso(
-                                Box::new(|| VarOfInfoLBComputer::new(pdi.psm())),
-                                p,
-                                &mut child_rng,
-                            ),
-                        };
-                        tx.send(result).unwrap();
-                    });
-                }
-            })
-            .unwrap();
-            std::mem::drop(tx); // Because of the cloning in the loop.
-            let mut working_best = SALSOResults::dummy();
-            let mut permutations_counter = 0;
-            for candidate in rx {
-                permutations_counter += candidate.n_permutations;
-                if candidate.expected_loss < working_best.expected_loss {
-                    working_best = candidate;
-                }
-            }
-            working_best.n_permutations = permutations_counter;
-            working_best
-        };
-        let fix_expected_loss = |kernel: f64| -> f64 {
-            match loss_function {
-                LossFunction::Binder => {
-                    BinderComputer::expected_loss_from_kernel(pdi.psm(), kernel)
-                }
-                LossFunction::VIlb => {
-                    VarOfInfoLBComputer::expected_loss_from_kernel(pdi.psm(), kernel)
-                }
-                _ => kernel,
-            }
-        };
-        if result.expected_loss >= global_best.expected_loss
-            || result.clustering == global_best.clustering
-        {
-            global_best.n_permutations += result.n_permutations;
-            global_best.expected_loss = fix_expected_loss(global_best.expected_loss);
-            return (global_best, false);
+    let stop_time = SystemTime::now() + Duration::new(seconds, nanoseconds);
+    let result = if !parallel {
+        match loss_function {
+            LossFunction::Binder => minimize_once_by_salso(
+                Box::new(|| BinderComputer::new(pdi.psm())),
+                p,
+                &stop_time,
+                rng,
+            ),
+            LossFunction::Binder2 => minimize_once_by_salso_v2(
+                Box::new(|| BinderLossComputer::new()),
+                pdi.draws(),
+                p,
+                &stop_time,
+                rng,
+            ),
+            LossFunction::OneMinusARI => minimize_once_by_salso_v2(
+                Box::new(|| OMARILossComputer::new(pdi.draws().n_clusterings())),
+                pdi.draws(),
+                p,
+                &stop_time,
+                rng,
+            ),
+            LossFunction::OneMinusARIapprox => minimize_once_by_salso(
+                Box::new(|| OneMinusARIapproxComputer::new(pdi.psm())),
+                p,
+                &stop_time,
+                rng,
+            ),
+            LossFunction::VI => minimize_once_by_salso_v2(
+                Box::new(|| VILossComputer::new(&cache)),
+                pdi.draws(),
+                p,
+                &stop_time,
+                rng,
+            ),
+            LossFunction::VIlb => minimize_once_by_salso(
+                Box::new(|| VarOfInfoLBComputer::new(pdi.psm())),
+                p,
+                &stop_time,
+                rng,
+            ),
         }
-        let previous_count = global_best.n_permutations;
-        global_best = result;
-        global_best.n_permutations += previous_count;
-        if std::time::SystemTime::now() > stop_time {
-            global_best.expected_loss = fix_expected_loss(global_best.expected_loss);
-            return (global_best, true);
+    } else {
+        let (tx, rx) = mpsc::channel();
+        let n_cores = num_cpus::get() as u32;
+        let p = SALSOParameters {
+            n_permutations: (p.n_permutations + n_cores - 1) / n_cores,
+            ..p
+        };
+        let cache_ref = &cache;
+        crossbeam::scope(|s| {
+            for _ in 0..n_cores {
+                let tx = mpsc::Sender::clone(&tx);
+                let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
+                s.spawn(move |_| {
+                    let result = match loss_function {
+                        LossFunction::Binder => minimize_once_by_salso(
+                            Box::new(|| BinderComputer::new(pdi.psm())),
+                            p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                        LossFunction::Binder2 => minimize_once_by_salso(
+                            Box::new(|| Binder2Computer::new(pdi.draws())),
+                            p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                        LossFunction::OneMinusARI => minimize_once_by_salso(
+                            Box::new(|| OneMinusARIComputer::new(pdi.draws())),
+                            p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                        LossFunction::OneMinusARIapprox => minimize_once_by_salso(
+                            Box::new(|| OneMinusARIapproxComputer::new(pdi.psm())),
+                            p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                        LossFunction::VI => minimize_once_by_salso(
+                            Box::new(|| VarOfInfoComputer::new(pdi.draws(), cache_ref)),
+                            p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                        LossFunction::VIlb => minimize_once_by_salso(
+                            Box::new(|| VarOfInfoLBComputer::new(pdi.psm())),
+                            p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                    };
+                    tx.send(result).unwrap();
+                });
+            }
+        })
+        .unwrap();
+        std::mem::drop(tx); // Because of the cloning in the loop.
+        let mut best = SALSOResults::dummy();
+        let mut permutations_counter = 0;
+        for candidate in rx {
+            permutations_counter += candidate.n_permutations;
+            if candidate.expected_loss < best.expected_loss {
+                best = candidate;
+            }
         }
-    }
+        best.n_permutations = permutations_counter;
+        best
+    };
+    let result = SALSOResults {
+        expected_loss: match loss_function {
+            LossFunction::Binder => {
+                BinderComputer::expected_loss_from_kernel(pdi.psm(), result.expected_loss)
+            }
+            LossFunction::VIlb => {
+                VarOfInfoLBComputer::expected_loss_from_kernel(pdi.psm(), result.expected_loss)
+            }
+            _ => result.expected_loss,
+        },
+        ..result
+    };
+    result
 }
 
 pub fn minimize_by_enumeration(
@@ -1655,7 +1674,6 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_scans_ptr: *mut i32,
     results_pr_explore_ptr: *mut f64,
     results_n_permutations_ptr: *mut i32,
-    results_curtailed_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let n_items = usize::try_from(n_items).unwrap();
@@ -1700,8 +1718,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         probability_of_exploration_shape,
         probability_of_exploration_rate,
     };
-    let (results, curtailed) =
-        minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
+    let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
     for (i, v) in results.clustering.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();
@@ -1710,7 +1727,6 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     *results_scans_ptr = i32::try_from(results.n_scans).unwrap();
     *results_pr_explore_ptr = f64::try_from(results.prob_exploration).unwrap();
     *results_n_permutations_ptr = i32::try_from(results.n_permutations).unwrap();
-    *results_curtailed_ptr = i32::try_from(curtailed).unwrap();
 }
 
 #[no_mangle]
