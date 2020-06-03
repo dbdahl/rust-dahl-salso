@@ -778,9 +778,6 @@ impl WorkingClustering {
 }
 
 pub trait LossComputer {
-    #[allow(unused_variables)]
-    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {}
-
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64;
 
     fn change_in_loss(
@@ -917,7 +914,12 @@ impl OMARILossComputer {
 }
 
 impl LossComputer for OMARILossComputer {
-    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
+        // DBD:  This function is completely messed up
+        // DBD:  This is a hack since decision_callback isn't working.
+        self.n = 0;
+        self.sum2 = 0.0;
+        self.sums = Array2::<f64>::zeros((cms.len_of(Axis(2)), 2));
         self.n = state.labels.len() as CountType;
         self.sum2 = state
             .occupied_clusters
@@ -938,14 +940,6 @@ impl LossComputer for OMARILossComputer {
                 }
             }
         }
-    }
-
-    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
-        // DBD:  This is a hack since decision_callback isn't working.
-        self.n = 0;
-        self.sum2 = 0.0;
-        self.sums = Array2::<f64>::zeros((cms.len_of(Axis(2)), 2));
-        self.initialize(state, cms);
         let mut sum = 0.0;
         let sum2 = self.sum2;
         let n_draws = self.sums.len_of(Axis(0));
@@ -1209,7 +1203,6 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
             draws.n_clusterings(),
         ));
         let mut loss_computer = loss_computer_factory();
-        loss_computer.initialize(&state, &cms);
         // Sequential allocation
         permutation.shuffle(rng);
         allocation_scan(

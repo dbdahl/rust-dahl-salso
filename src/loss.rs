@@ -76,7 +76,6 @@ pub fn compute_loss_multiple<'a, T: LossComputer>(
         let state =
             WorkingClustering::from_slice(clusterings.labels(k), clusterings.max_clusters());
         let cms = draws.make_confusion_matrices(&state);
-        loss_computer.initialize(&state, &cms);
         unsafe { *results.get_unchecked_mut(k) = loss_computer.compute_loss(&state, &cms) };
     }
 }
