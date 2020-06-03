@@ -1239,8 +1239,13 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
         }
         let expected_loss = loss_computer.compute_loss(&state, &cms);
         if expected_loss < best.expected_loss {
-            let labels = state.standardize().iter().map(|x| *x as usize).collect();
-            best = SALSOResults::new(labels, expected_loss, scan_counter, 0.0, 1)
+            let clustering = state.standardize().iter().map(|x| *x as usize).collect();
+            best = SALSOResults {
+                clustering,
+                expected_loss,
+                n_scans: scan_counter,
+                ..best
+            }
         }
     }
     best.n_permutations = p.n_permutations;
