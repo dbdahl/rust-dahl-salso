@@ -787,12 +787,12 @@ pub trait LossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: Option<LabelType>,
+        from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        if from_label.is_some() && to_label == from_label.unwrap() {
+        if from_label_option.is_some() && to_label == from_label_option.unwrap() {
             self.compute_loss(&state, &cms)
         } else {
             let mut state = state.clone();
@@ -802,8 +802,12 @@ pub trait LossComputer {
             for draw_index in 0..n_draws {
                 let other_index = draws.label(draw_index, item_index) as usize;
                 cms[(to_label as usize + 1, other_index, draw_index)] += 1;
-                if from_label.is_some() {
-                    cms[(from_label.unwrap() as usize + 1, other_index, draw_index)] -= 1;
+                if from_label_option.is_some() {
+                    cms[(
+                        from_label_option.unwrap() as usize + 1,
+                        other_index,
+                        draw_index,
+                    )] -= 1;
                 }
             }
             self.compute_loss(&state, &cms)
@@ -815,7 +819,7 @@ pub trait LossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: LabelType,
+        from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
@@ -868,12 +872,12 @@ impl LossComputer for BinderLossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: Option<LabelType>,
+        from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        let offset = if from_label.is_some() && to_label == from_label.unwrap() {
+        let offset = if from_label_option.is_some() && to_label == from_label_option.unwrap() {
             1
         } else {
             0
@@ -957,12 +961,12 @@ impl LossComputer for OMARILossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: Option<LabelType>,
+        from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        let offset = if from_label.is_some() && to_label == from_label.unwrap() {
+        let offset = if from_label_option.is_some() && to_label == from_label_option.unwrap() {
             1
         } else {
             0
@@ -991,7 +995,7 @@ impl LossComputer for OMARILossComputer {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        _from_label: LabelType,
+        _from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
@@ -1056,12 +1060,12 @@ impl<'a> LossComputer for VILossComputer<'a> {
         &mut self,
         item_index: usize,
         to_label: LabelType,
-        from_label: Option<LabelType>,
+        from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) -> f64 {
-        let offset = if from_label.is_some() && to_label == from_label.unwrap() {
+        let offset = if from_label_option.is_some() && to_label == from_label_option.unwrap() {
             1
         } else {
             0
@@ -1114,6 +1118,76 @@ impl SALSOResults {
     }
 }
 
+fn allocation_scan<T: LossComputer>(
+    sweetening_scan: bool,
+    state: &mut WorkingClustering,
+    cms: &mut Array3<CountType>,
+    permutation: &Vec<usize>,
+    loss_computer: &mut T,
+    _p: &SALSOParameters,
+    draws: &Clusterings,
+) -> bool {
+    let mut state_changed = false;
+    for item_index in permutation {
+        let item_index = *item_index;
+        let label_of_empty_cluster = state.label_of_empty_cluster();
+        let from_label_option = match sweetening_scan {
+            true => Some(state.get(item_index)),
+            false => None,
+        };
+        let iter = state
+            .occupied_clusters
+            .iter()
+            .chain(label_of_empty_cluster.iter())
+            .map(|to_label| {
+                (
+                    *to_label,
+                    loss_computer.change_in_loss(
+                        item_index,
+                        *to_label,
+                        from_label_option,
+                        &state,
+                        &cms,
+                        &draws,
+                    ),
+                )
+            });
+        let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
+        if !sweetening_scan || to_label != from_label_option.unwrap() {
+            loss_computer.decision_callback(
+                item_index,
+                to_label,
+                from_label_option,
+                &state,
+                &cms,
+                &draws,
+            );
+            if sweetening_scan {
+                state.reassign(item_index, to_label);
+            } else {
+                state.assign(item_index, to_label);
+            }
+            let from_index = if sweetening_scan {
+                from_label_option.unwrap() as usize + 1
+            } else {
+                0
+            };
+            let to_index = to_label as usize + 1;
+            for draw_index in 0..draws.n_clusterings() {
+                let other_index = draws.label(draw_index, item_index) as usize;
+                if sweetening_scan {
+                    cms[(from_index, other_index, draw_index)] -= 1;
+                } else {
+                    cms[(0, other_index, draw_index)] += 1;
+                }
+                cms[(to_index, other_index, draw_index)] += 1;
+            }
+            state_changed = true;
+        }
+    }
+    state_changed
+}
+
 pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
@@ -1136,72 +1210,30 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     // Sequential allocation
     permutation.shuffle(rng);
-    for item_index in &permutation {
-        let item_index = *item_index;
-        let label_of_empty_cluster = state.label_of_empty_cluster();
-        let iter = state
-            .occupied_clusters
-            .iter()
-            .chain(label_of_empty_cluster.iter())
-            .map(|to_label| {
-                (
-                    *to_label,
-                    loss_computer.change_in_loss(item_index, *to_label, None, &state, &cms, &draws),
-                )
-            });
-        let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
-        // loss_computer.decision_callback(item_index, to_label, from_label, &state, &cms, &draws);
-        state.assign(item_index, to_label);
-        let to_index = to_label as usize + 1;
-        for draw_index in 0..draws.n_clusterings() {
-            let other_index = draws.label(draw_index, item_index) as usize;
-            cms[(0, other_index, draw_index)] += 1;
-            cms[(to_index, other_index, draw_index)] += 1;
-        }
-    }
+    allocation_scan(
+        false,
+        &mut state,
+        &mut cms,
+        &permutation,
+        &mut loss_computer,
+        &p,
+        draws,
+    );
     // Sweetening
     let mut scan_counter = 0;
     let mut state_changed = true;
     while state_changed && scan_counter < p.max_scans {
-        state_changed = false;
         scan_counter += 1;
         permutation.shuffle(rng);
-        for item_index in &permutation {
-            let item_index = *item_index;
-            let label_of_empty_cluster = state.label_of_empty_cluster();
-            let from_label = state.get(item_index);
-            let iter = state
-                .occupied_clusters
-                .iter()
-                .chain(label_of_empty_cluster.iter())
-                .map(|to_label| {
-                    (
-                        *to_label,
-                        loss_computer.change_in_loss(
-                            item_index,
-                            *to_label,
-                            Some(from_label),
-                            &state,
-                            &cms,
-                            &draws,
-                        ),
-                    )
-                });
-            let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
-            if to_label != from_label {
-                loss_computer
-                    .decision_callback(item_index, to_label, from_label, &state, &cms, &draws);
-                state.reassign(item_index, to_label);
-                let from_index = from_label as usize + 1;
-                let to_index = to_label as usize + 1;
-                for draw_index in 0..draws.n_clusterings() {
-                    let other_index = draws.label(draw_index, item_index) as usize;
-                    cms[(from_index, other_index, draw_index)] -= 1;
-                    cms[(to_index, other_index, draw_index)] += 1;
-                }
-                state_changed = true;
-            }
-        }
+        state_changed = allocation_scan(
+            true,
+            &mut state,
+            &mut cms,
+            &permutation,
+            &mut loss_computer,
+            &p,
+            draws,
+        );
     }
     let expected_loss = loss_computer.compute_loss(&state, &cms);
     let labels = state.standardize().iter().map(|x| *x as usize).collect();
