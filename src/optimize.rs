@@ -1199,34 +1199,21 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
         0 | 1 => draws.max_clusters(),
         _ => p.max_size,
     };
-    let mut state = WorkingClustering::empty(n_items, max_size);
-    let mut cms = Array3::<CountType>::zeros((
-        state.max_clusters() as usize + 1,
-        draws.max_clusters() as usize,
-        draws.n_clusterings(),
-    ));
-    let mut loss_computer = loss_computer_factory();
-    loss_computer.initialize(&state, &cms);
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
-    // Sequential allocation
-    permutation.shuffle(rng);
-    allocation_scan(
-        false,
-        &mut state,
-        &mut cms,
-        &permutation,
-        &mut loss_computer,
-        &p,
-        draws,
-    );
-    // Sweetening
-    let mut scan_counter = 0;
-    let mut state_changed = true;
-    while state_changed && scan_counter < p.max_scans {
-        scan_counter += 1;
+    let mut best = SALSOResults::dummy();
+    for _ in 0..p.n_permutations {
+        let mut state = WorkingClustering::empty(n_items, max_size);
+        let mut cms = Array3::<CountType>::zeros((
+            state.max_clusters() as usize + 1,
+            draws.max_clusters() as usize,
+            draws.n_clusterings(),
+        ));
+        let mut loss_computer = loss_computer_factory();
+        loss_computer.initialize(&state, &cms);
+        // Sequential allocation
         permutation.shuffle(rng);
-        state_changed = allocation_scan(
-            true,
+        allocation_scan(
+            false,
             &mut state,
             &mut cms,
             &permutation,
@@ -1234,10 +1221,30 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
             &p,
             draws,
         );
+        // Sweetening
+        let mut scan_counter = 0;
+        let mut state_changed = true;
+        while state_changed && scan_counter < p.max_scans {
+            scan_counter += 1;
+            permutation.shuffle(rng);
+            state_changed = allocation_scan(
+                true,
+                &mut state,
+                &mut cms,
+                &permutation,
+                &mut loss_computer,
+                &p,
+                draws,
+            );
+        }
+        let expected_loss = loss_computer.compute_loss(&state, &cms);
+        if expected_loss < best.expected_loss {
+            let labels = state.standardize().iter().map(|x| *x as usize).collect();
+            best = SALSOResults::new(labels, expected_loss, scan_counter, 0.0, 1)
+        }
     }
-    let expected_loss = loss_computer.compute_loss(&state, &cms);
-    let labels = state.standardize().iter().map(|x| *x as usize).collect();
-    SALSOResults::new(labels, expected_loss, scan_counter, 0.0, 1)
+    best.n_permutations = p.n_permutations;
+    best
 }
 
 // General algorithm
