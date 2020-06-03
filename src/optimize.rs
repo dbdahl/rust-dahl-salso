@@ -1522,14 +1522,16 @@ pub fn minimize_by_salso<T: Rng>(
                             &stop_time,
                             &mut child_rng,
                         ),
-                        LossFunction::Binder2 => minimize_once_by_salso(
-                            Box::new(|| Binder2Computer::new(pdi.draws())),
+                        LossFunction::Binder2 => minimize_once_by_salso_v2(
+                            Box::new(|| BinderLossComputer::new()),
+                            pdi.draws(),
                             p,
                             &stop_time,
                             &mut child_rng,
                         ),
-                        LossFunction::OneMinusARI => minimize_once_by_salso(
-                            Box::new(|| OneMinusARIComputer::new(pdi.draws())),
+                        LossFunction::OneMinusARI => minimize_once_by_salso_v2(
+                            Box::new(|| OMARILossComputer::new(pdi.draws().n_clusterings())),
+                            pdi.draws(),
                             p,
                             &stop_time,
                             &mut child_rng,
@@ -1540,8 +1542,9 @@ pub fn minimize_by_salso<T: Rng>(
                             &stop_time,
                             &mut child_rng,
                         ),
-                        LossFunction::VI => minimize_once_by_salso(
-                            Box::new(|| VarOfInfoComputer::new(pdi.draws(), cache_ref)),
+                        LossFunction::VI => minimize_once_by_salso_v2(
+                            Box::new(|| VILossComputer::new(cache_ref)),
+                            pdi.draws(),
                             p,
                             &stop_time,
                             &mut child_rng,
