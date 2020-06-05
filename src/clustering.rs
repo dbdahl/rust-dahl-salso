@@ -14,17 +14,17 @@ pub struct Clusterings {
 
 impl Clusterings {
     pub fn from_i32_column_major_order(original_labels: &[i32], n_items: usize) -> Self {
-        let n_draws = original_labels.len() / n_items;
-        let mut labels = Vec::with_capacity(n_draws * n_items);
-        let mut n_clusters = Vec::with_capacity(n_draws);
+        let n_clusterings = original_labels.len() / n_items;
+        let mut labels = Vec::with_capacity(n_clusterings * n_items);
+        let mut n_clusters = Vec::with_capacity(n_clusterings);
         let mut map = HashMap::new();
         let mut max_clusters = 0;
-        for i in 0..n_draws {
+        for i in 0..n_clusterings {
             map.clear();
             let mut next_new_label = 0;
             for j in 0..n_items {
                 let c = *map
-                    .entry(unsafe { original_labels.get_unchecked(j * n_draws + i) })
+                    .entry(unsafe { original_labels.get_unchecked(j * n_clusterings + i) })
                     .or_insert_with(|| {
                         let c = next_new_label;
                         next_new_label += 1;
@@ -38,7 +38,7 @@ impl Clusterings {
             }
         }
         Self {
-            n_clusterings: n_draws,
+            n_clusterings,
             n_items,
             labels,
             n_clusters,
@@ -89,5 +89,16 @@ impl Clusterings {
 
     pub fn max_clusters(&self) -> LabelType {
         self.max_clusters
+    }
+
+    pub fn mean_and_sd_of_n_clusters(&self) -> (f64, f64) {
+        let ndf = self.n_clusterings as f64;
+        let (sum1, sum2) = self.n_clusters.iter().fold((0.0, 0.0), |(s1, s2), x| {
+            let x = *x as f64;
+            (s1 + x, s2 + x * x)
+        });
+        let mean = sum1 / ndf;
+        let sd = ((sum2 - sum1 * sum1 / ndf) / (ndf - 1.0)).sqrt();
+        (mean, sd)
     }
 }

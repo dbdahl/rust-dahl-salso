@@ -605,7 +605,7 @@ pub struct WorkingClustering {
 
 impl WorkingClustering {
     pub fn empty(n_items: usize, max_clusters: LabelType) -> Self {
-        let max_clusters = max_clusters.max(2);
+        let max_clusters = max_clusters.max(1);
         let sizes = vec![0; max_clusters as usize];
         let occupied_clusters = Vec::with_capacity(max_clusters as usize);
         Self {
@@ -617,38 +617,12 @@ impl WorkingClustering {
         }
     }
 
-    pub fn one_cluster(n_items: usize, max_clusters: LabelType) -> Self {
-        let max_clusters = max_clusters.max(2);
-        let mut sizes = vec![0; max_clusters as usize];
-        sizes[0] = n_items as CountType;
-        let mut occupied_clusters = Vec::with_capacity(max_clusters as usize);
-        occupied_clusters.push(0);
-        Self {
-            labels: vec![0; n_items],
-            max_clusters,
-            sizes,
-            occupied_clusters,
-            potentially_empty_label: 1,
-        }
-    }
-
-    pub fn random_state<T: Rng>(n_items: usize, rng: &mut T) -> Self {
-        Self::from_vector(
-            {
-                let mut v = Vec::with_capacity(n_items);
-                v.resize_with(n_items, || rng.gen_range(0, n_items as LabelType));
-                v
-            },
-            n_items as LabelType,
-        )
-    }
-
     pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
         Self::from_vector(labels.to_vec(), max_clusters)
     }
 
     pub fn from_vector(labels: Vec<LabelType>, max_clusters: LabelType) -> Self {
-        let max_clusters = max_clusters.max(2);
+        let max_clusters = max_clusters.max(1);
         let mut x = Self {
             labels,
             max_clusters,
@@ -1228,7 +1202,10 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
 ) -> SALSOResults {
     let n_items = draws.n_items();
     let max_size = match p.max_size {
-        0 | 1 => draws.max_clusters(),
+        0 => {
+            let (mean, sd) = draws.mean_and_sd_of_n_clusters();
+            (mean + 2.0 * sd).round() as LabelType
+        }
         _ => p.max_size,
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
