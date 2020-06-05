@@ -1113,14 +1113,50 @@ impl SALSOResults {
     }
 }
 
-fn allocation_scan<T: LossComputer>(
+fn select_label<'a, I, U>(pairs: I, exploration_parameter: f64, rng: &mut U) -> LabelType
+where
+    I: Iterator<Item = (LabelType, f64)>,
+    U: Rng,
+{
+    if exploration_parameter >= 1.0 || rng.gen_range(0.0, 1.0) < exploration_parameter {
+        let mut s0 = f64::INFINITY;
+        let mut l0 = 0;
+        for pair in pairs {
+            if pair.1 < s0 {
+                s0 = pair.1;
+                l0 = pair.0;
+            }
+        }
+        l0
+    } else {
+        let mut s0 = f64::INFINITY;
+        let mut s1 = f64::INFINITY;
+        let mut l0 = 0;
+        let mut l1 = 0;
+        for pair in pairs {
+            if pair.1 < s0 {
+                s1 = s0;
+                s0 = pair.1;
+                l1 = l0;
+                l0 = pair.0;
+            } else if pair.1 < s1 {
+                s1 = pair.1;
+                l1 = pair.0;
+            }
+        }
+        l1
+    }
+}
+
+fn allocation_scan<T: LossComputer, U: Rng>(
     sweetening_scan: bool,
     state: &mut WorkingClustering,
     cms: &mut Array3<CountType>,
     permutation: &Vec<usize>,
     loss_computer: &mut T,
-    _p: &SALSOParameters,
+    exploration_parameter: f64,
     draws: &Clusterings,
+    rng: &mut U,
 ) -> bool {
     let mut state_changed = false;
     for item_index in permutation {
@@ -1147,7 +1183,7 @@ fn allocation_scan<T: LossComputer>(
                     ),
                 )
             });
-        let to_label = iter.min_by(cmp_f64_with_enumeration).unwrap().0;
+        let to_label = select_label(iter, exploration_parameter, rng);
         if !sweetening_scan || to_label != from_label_option.unwrap() {
             loss_computer.decision_callback(
                 item_index,
@@ -1213,8 +1249,9 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
             &mut cms,
             &permutation,
             &mut loss_computer,
-            &p,
+            p.probability_of_exploration_probability_at_zero,
             draws,
+            rng,
         );
         // Sweetening
         let mut scan_counter = 0;
@@ -1228,8 +1265,9 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
                 &mut cms,
                 &permutation,
                 &mut loss_computer,
-                &p,
+                1.0,
                 draws,
+                rng,
             );
         }
         let expected_loss = loss_computer.compute_loss(&state, &cms);
