@@ -1062,7 +1062,7 @@ pub struct SALSOResults {
     expected_loss: f64,
     n_scans: u32,
     prob_exploration: f64,
-    n_permutations: u32,
+    n_runs: u32,
 }
 
 impl SALSOResults {
@@ -1071,14 +1071,14 @@ impl SALSOResults {
         expected_loss: f64,
         n_scans: u32,
         prob_exploration: f64,
-        n_permutations: u32,
+        n_runs: u32,
     ) -> Self {
         Self {
             clustering,
             expected_loss,
             n_scans,
             prob_exploration,
-            n_permutations,
+            n_runs,
         }
     }
 
@@ -1210,7 +1210,7 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy();
-    for permutation_counter in 1..=p.n_permutations {
+    for run_counter in 1..=p.n_runs {
         let mut state = WorkingClustering::empty(n_items, max_size);
         let mut cms = Array3::<CountType>::zeros((
             state.max_clusters() as usize + 1,
@@ -1258,11 +1258,11 @@ pub fn minimize_once_by_salso_v2<'a, T: LossComputer, U: Rng>(
             }
         }
         if SystemTime::now() > *stop_time {
-            best.n_permutations = permutation_counter;
+            best.n_runs = run_counter;
             return best;
         }
     }
-    best.n_permutations = p.n_permutations;
+    best.n_runs = p.n_runs;
     best
 }
 
@@ -1333,7 +1333,7 @@ pub struct SALSOParameters {
     n_items: usize,
     max_size: LabelType,
     max_scans: u32,
-    n_permutations: u32,
+    n_runs: u32,
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
@@ -1360,8 +1360,8 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
     let mut global_n_scans = 0;
     let mut global_pr_explore = 0.0;
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
-    let mut permutations_counter = 0;
-    while permutations_counter < p.n_permutations {
+    let mut run_counter = 0;
+    while run_counter < p.n_runs {
         let mut computer = computer_factory();
         let mut partition = Partition::new(p.n_items);
         permutation.shuffle(rng);
@@ -1435,7 +1435,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
             global_n_scans = n_scans;
             global_pr_explore = pr_explore;
         }
-        permutations_counter += 1;
+        run_counter += 1;
         if SystemTime::now() > *stop_time {
             global_best.canonicalize();
             let labels = global_best.labels_via_copying();
@@ -1444,7 +1444,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
                 global_minimum,
                 global_n_scans,
                 global_pr_explore,
-                permutations_counter,
+                run_counter,
             );
         }
     }
@@ -1456,7 +1456,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: Computer>(
         global_minimum,
         global_n_scans,
         global_pr_explore,
-        permutations_counter,
+        run_counter,
     )
 }
 
@@ -1521,7 +1521,7 @@ pub fn minimize_by_salso<T: Rng>(
         let (tx, rx) = mpsc::channel();
         let n_cores = num_cpus::get() as u32;
         let p = SALSOParameters {
-            n_permutations: (p.n_permutations + n_cores - 1) / n_cores,
+            n_runs: (p.n_runs + n_cores - 1) / n_cores,
             ..p
         };
         let cache_ref = &cache;
@@ -1578,14 +1578,14 @@ pub fn minimize_by_salso<T: Rng>(
         .unwrap();
         std::mem::drop(tx); // Because of the cloning in the loop.
         let mut best = SALSOResults::dummy();
-        let mut permutations_counter = 0;
+        let mut run_counter = 0;
         for candidate in rx {
-            permutations_counter += candidate.n_permutations;
+            run_counter += candidate.n_runs;
             if candidate.expected_loss < best.expected_loss {
                 best = candidate;
             }
         }
-        best.n_permutations = permutations_counter;
+        best.n_runs = run_counter;
         best
     };
     let result = SALSOResults {
@@ -1655,7 +1655,7 @@ mod tests_optimize {
             n_items,
             max_size: 2,
             max_scans: 10,
-            n_permutations: 100,
+            n_runs: 100,
             probability_of_exploration_probability_at_zero: 0.5,
             probability_of_exploration_shape: 0.5,
             probability_of_exploration_rate: 50.0,
@@ -1681,7 +1681,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     loss: i32,
     max_size: i32,
     max_scans: i32,
-    n_permutations: i32,
+    n_runs: i32,
     probability_of_exploration_probability_at_zero: f64,
     probability_of_exploration_shape: f64,
     probability_of_exploration_rate: f64,
@@ -1691,7 +1691,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_expected_loss_ptr: *mut f64,
     results_scans_ptr: *mut i32,
     results_pr_explore_ptr: *mut f64,
-    results_n_permutations_ptr: *mut i32,
+    results_n_runs_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let n_items = usize::try_from(n_items).unwrap();
@@ -1703,7 +1703,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
     let max_size = LabelType::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
-    let n_permutations = u32::try_from(n_permutations).unwrap();
+    let n_runs = u32::try_from(n_runs).unwrap();
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
@@ -1731,7 +1731,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_items,
         max_size,
         max_scans,
-        n_permutations,
+        n_runs,
         probability_of_exploration_probability_at_zero,
         probability_of_exploration_shape,
         probability_of_exploration_rate,
@@ -1744,7 +1744,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     *results_expected_loss_ptr = results.expected_loss;
     *results_scans_ptr = i32::try_from(results.n_scans).unwrap();
     *results_pr_explore_ptr = f64::try_from(results.prob_exploration).unwrap();
-    *results_n_permutations_ptr = i32::try_from(results.n_permutations).unwrap();
+    *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
 }
 
 #[no_mangle]
