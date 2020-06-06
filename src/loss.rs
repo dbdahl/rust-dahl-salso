@@ -1,10 +1,8 @@
 use dahl_partition::*;
 
-use crate::clustering::Clusterings;
+use crate::clustering::{Clusterings, WorkingClustering};
 use crate::confusion::{ConfusionMatrices, Log2Cache};
-use crate::optimize::{
-    BinderLossComputer, LossComputer, OMARILossComputer, VILossComputer, WorkingClustering,
-};
+use crate::optimize::{BinderLossComputer, LossComputer, OMARILossComputer, VILossComputer};
 use crate::*;
 use std::slice;
 

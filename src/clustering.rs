@@ -1,6 +1,5 @@
 use crate::*;
 
-use crate::optimize::WorkingClustering;
 use ndarray::Array3;
 use std::collections::HashMap;
 
@@ -100,5 +99,175 @@ impl Clusterings {
         let mean = sum1 / ndf;
         let sd = ((sum2 - sum1 * sum1 / ndf) / (ndf - 1.0)).sqrt();
         (mean, sd)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkingClustering {
+    labels: Vec<LabelType>,
+    max_clusters: LabelType,
+    sizes: Vec<CountType>,
+    occupied_clusters: Vec<LabelType>,
+    potentially_empty_label: LabelType,
+}
+
+impl WorkingClustering {
+    pub fn empty(n_items: usize, max_clusters: LabelType) -> Self {
+        let max_clusters = max_clusters.max(1);
+        let sizes = vec![0; max_clusters as usize];
+        let occupied_clusters = Vec::with_capacity(max_clusters as usize);
+        Self {
+            labels: vec![0; n_items],
+            max_clusters,
+            sizes,
+            occupied_clusters,
+            potentially_empty_label: 0,
+        }
+    }
+
+    pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
+        Self::from_vector(labels.to_vec(), max_clusters)
+    }
+
+    pub fn from_vector(labels: Vec<LabelType>, max_clusters: LabelType) -> Self {
+        let max_clusters = max_clusters.max(1);
+        let mut x = Self {
+            labels,
+            max_clusters,
+            sizes: vec![0; max_clusters as usize],
+            occupied_clusters: Vec::with_capacity(max_clusters as usize),
+            potentially_empty_label: 0,
+        };
+        for label in &x.labels {
+            x.sizes[*label as usize] += 1;
+        }
+        for (index, size) in x.sizes.iter().enumerate() {
+            if *size > 0 {
+                x.occupied_clusters.push(index as LabelType)
+            }
+        }
+        x
+    }
+
+    pub fn n_items(&self) -> CountType {
+        self.labels.len() as CountType
+    }
+
+    pub fn occupied_clusters(&self) -> &Vec<LabelType> {
+        &self.occupied_clusters
+    }
+
+    pub fn label_of_empty_cluster(&mut self) -> Option<LabelType> {
+        if self.occupied_clusters.len() >= self.max_clusters as usize {
+            None
+        } else {
+            if self.sizes[self.potentially_empty_label as usize] == 0 {
+                Some(self.potentially_empty_label)
+            } else {
+                match self.sizes.iter().position(|&size| size == 0) {
+                    Some(index) => {
+                        self.potentially_empty_label = index as LabelType;
+                        Some(self.potentially_empty_label)
+                    }
+                    None => None,
+                }
+            }
+        }
+    }
+
+    pub fn standardize(&self) -> Vec<LabelType> {
+        let n_items = self.labels.len();
+        let mut labels = Vec::with_capacity(n_items);
+        let mut map = HashMap::new();
+        let mut next_new_label = 0;
+        for j in 0..n_items {
+            let c = *map.entry(self.labels[j]).or_insert_with(|| {
+                let c = next_new_label;
+                next_new_label += 1;
+                c
+            });
+            labels.push(c);
+        }
+        labels
+    }
+
+    pub fn as_slice(&self) -> &[LabelType] {
+        &self.labels[..]
+    }
+
+    pub fn max_clusters(&self) -> LabelType {
+        self.max_clusters
+    }
+
+    pub fn n_clusters(&self) -> LabelType {
+        self.occupied_clusters.len() as LabelType
+    }
+
+    pub fn size_of(&self, label: LabelType) -> CountType {
+        self.sizes[label as usize]
+    }
+
+    pub fn get(&self, item_index: usize) -> LabelType {
+        self.labels[item_index]
+    }
+
+    pub unsafe fn get_unchecked(&self, item_index: usize) -> LabelType {
+        *self.labels.get_unchecked(item_index)
+    }
+
+    pub fn assign(&mut self, item_index: usize, label: LabelType) {
+        self.labels[item_index] = label;
+        if self.sizes[label as usize] == 0 {
+            self.occupied_clusters.push(label);
+        }
+        self.sizes[label as usize] += 1;
+    }
+
+    pub unsafe fn assign_unchecked(&mut self, item_index: usize, label: LabelType) {
+        *self.labels.get_unchecked_mut(item_index) = label;
+        if *self.sizes.get_unchecked(label as usize) == 0 {
+            self.occupied_clusters.push(label);
+        }
+        *self.sizes.get_unchecked_mut(label as usize) += 1;
+    }
+
+    pub fn reassign(&mut self, item_index: usize, new_label: LabelType) {
+        let old_label = self.labels[item_index];
+        if new_label != old_label {
+            self.labels[item_index] = new_label;
+            self.sizes[old_label as usize] -= 1;
+            if self.sizes[old_label as usize] == 0 {
+                self.occupied_clusters.swap_remove(
+                    self.occupied_clusters
+                        .iter()
+                        .position(|x| *x == old_label)
+                        .unwrap(),
+                );
+            }
+            if self.sizes[new_label as usize] == 0 {
+                self.occupied_clusters.push(new_label);
+            }
+            self.sizes[new_label as usize] += 1;
+        }
+    }
+
+    pub unsafe fn reassign_unchecked(&mut self, item_index: usize, new_label: LabelType) {
+        let old_label = *self.labels.get_unchecked(item_index);
+        if new_label != old_label {
+            *self.labels.get_unchecked_mut(item_index) = new_label;
+            *self.sizes.get_unchecked_mut(old_label as usize) -= 1;
+            if *self.sizes.get_unchecked(old_label as usize) == 0 {
+                self.occupied_clusters.swap_remove(
+                    self.occupied_clusters
+                        .iter()
+                        .position(|x| *x == old_label)
+                        .unwrap(),
+                );
+            }
+            if *self.sizes.get_unchecked(new_label as usize) == 0 {
+                self.occupied_clusters.push(new_label);
+            }
+            *self.sizes.get_unchecked_mut(new_label as usize) += 1;
+        }
     }
 }

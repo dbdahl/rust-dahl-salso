@@ -4,7 +4,7 @@ extern crate num_traits;
 extern crate rand;
 
 use self::ndarray::{Array2, Array3, Axis};
-use crate::clustering::Clusterings;
+use crate::clustering::{Clusterings, WorkingClustering};
 use crate::confusion::{ConfusionMatrices, Log2Cache};
 use crate::loss::*;
 use crate::*;
@@ -16,7 +16,6 @@ use rand::SeedableRng;
 use rand_distr::{Distribution, Gamma};
 use rand_isaac::IsaacRng;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::f64;
 use std::slice;
@@ -594,164 +593,6 @@ impl<'a> Computer for VarOfInfoLBComputer<'a> {
 
 // Alternative
 
-#[derive(Debug, Clone)]
-pub struct WorkingClustering {
-    labels: Vec<LabelType>,
-    max_clusters: LabelType,
-    sizes: Vec<CountType>,
-    occupied_clusters: Vec<LabelType>,
-    potentially_empty_label: LabelType,
-}
-
-impl WorkingClustering {
-    pub fn empty(n_items: usize, max_clusters: LabelType) -> Self {
-        let max_clusters = max_clusters.max(1);
-        let sizes = vec![0; max_clusters as usize];
-        let occupied_clusters = Vec::with_capacity(max_clusters as usize);
-        Self {
-            labels: vec![0; n_items],
-            max_clusters,
-            sizes,
-            occupied_clusters,
-            potentially_empty_label: 0,
-        }
-    }
-
-    pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
-        Self::from_vector(labels.to_vec(), max_clusters)
-    }
-
-    pub fn from_vector(labels: Vec<LabelType>, max_clusters: LabelType) -> Self {
-        let max_clusters = max_clusters.max(1);
-        let mut x = Self {
-            labels,
-            max_clusters,
-            sizes: vec![0; max_clusters as usize],
-            occupied_clusters: Vec::with_capacity(max_clusters as usize),
-            potentially_empty_label: 0,
-        };
-        for label in &x.labels {
-            x.sizes[*label as usize] += 1;
-        }
-        for (index, size) in x.sizes.iter().enumerate() {
-            if *size > 0 {
-                x.occupied_clusters.push(index as LabelType)
-            }
-        }
-        x
-    }
-
-    pub fn label_of_empty_cluster(&mut self) -> Option<LabelType> {
-        if self.occupied_clusters.len() >= self.max_clusters as usize {
-            None
-        } else {
-            if self.sizes[self.potentially_empty_label as usize] == 0 {
-                Some(self.potentially_empty_label)
-            } else {
-                match self.sizes.iter().position(|&size| size == 0) {
-                    Some(index) => {
-                        self.potentially_empty_label = index as LabelType;
-                        Some(self.potentially_empty_label)
-                    }
-                    None => None,
-                }
-            }
-        }
-    }
-
-    pub fn standardize(&self) -> Vec<LabelType> {
-        let n_items = self.labels.len();
-        let mut labels = Vec::with_capacity(n_items);
-        let mut map = HashMap::new();
-        let mut next_new_label = 0;
-        for j in 0..n_items {
-            let c = *map.entry(self.labels[j]).or_insert_with(|| {
-                let c = next_new_label;
-                next_new_label += 1;
-                c
-            });
-            labels.push(c);
-        }
-        labels
-    }
-
-    pub fn max_clusters(&self) -> LabelType {
-        self.max_clusters
-    }
-
-    pub fn n_clusters(&self) -> LabelType {
-        self.occupied_clusters.len() as LabelType
-    }
-
-    pub fn as_slice(&self) -> &[LabelType] {
-        &self.labels[..]
-    }
-
-    pub fn get(&self, item_index: usize) -> LabelType {
-        self.labels[item_index]
-    }
-
-    pub unsafe fn get_unchecked(&self, item_index: usize) -> LabelType {
-        *self.labels.get_unchecked(item_index)
-    }
-
-    pub fn assign(&mut self, item_index: usize, label: LabelType) {
-        self.labels[item_index] = label;
-        if self.sizes[label as usize] == 0 {
-            self.occupied_clusters.push(label);
-        }
-        self.sizes[label as usize] += 1;
-    }
-
-    pub unsafe fn assign_unchecked(&mut self, item_index: usize, label: LabelType) {
-        *self.labels.get_unchecked_mut(item_index) = label;
-        if *self.sizes.get_unchecked(label as usize) == 0 {
-            self.occupied_clusters.push(label);
-        }
-        *self.sizes.get_unchecked_mut(label as usize) += 1;
-    }
-
-    pub fn reassign(&mut self, item_index: usize, new_label: LabelType) {
-        let old_label = self.labels[item_index];
-        if new_label != old_label {
-            self.labels[item_index] = new_label;
-            self.sizes[old_label as usize] -= 1;
-            if self.sizes[old_label as usize] == 0 {
-                self.occupied_clusters.swap_remove(
-                    self.occupied_clusters
-                        .iter()
-                        .position(|x| *x == old_label)
-                        .unwrap(),
-                );
-            }
-            if self.sizes[new_label as usize] == 0 {
-                self.occupied_clusters.push(new_label);
-            }
-            self.sizes[new_label as usize] += 1;
-        }
-    }
-
-    pub unsafe fn reassign_unchecked(&mut self, item_index: usize, new_label: LabelType) {
-        let old_label = *self.labels.get_unchecked(item_index);
-        if new_label != old_label {
-            *self.labels.get_unchecked_mut(item_index) = new_label;
-            *self.sizes.get_unchecked_mut(old_label as usize) -= 1;
-            if *self.sizes.get_unchecked(old_label as usize) == 0 {
-                self.occupied_clusters.swap_remove(
-                    self.occupied_clusters
-                        .iter()
-                        .position(|x| *x == old_label)
-                        .unwrap(),
-                );
-            }
-            if *self.sizes.get_unchecked(new_label as usize) == 0 {
-                self.occupied_clusters.push(new_label);
-            }
-            *self.sizes.get_unchecked_mut(new_label as usize) += 1;
-        }
-    }
-}
-
 pub trait LossComputer {
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64;
 
@@ -817,9 +658,9 @@ impl BinderLossComputer {
 impl LossComputer for BinderLossComputer {
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let mut sum: f64 = state
-            .occupied_clusters
+            .occupied_clusters()
             .iter()
-            .map(|i| BinderLossComputer::n_squared(state.sizes[*i as usize]))
+            .map(|i| BinderLossComputer::n_squared(state.size_of(*i)))
             .sum();
         let n_draws = cms.len_of(Axis(2));
         sum *= n_draws as f64;
@@ -828,7 +669,7 @@ impl LossComputer for BinderLossComputer {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
                     sum += BinderLossComputer::n_squared(cms[(0, other_index, draw_index)]);
-                    for main_label in state.occupied_clusters.iter() {
+                    for main_label in state.occupied_clusters().iter() {
                         sum -= 2.0
                             * BinderLossComputer::n_squared(
                                 cms[(*main_label as usize + 1, other_index, draw_index)],
@@ -837,7 +678,7 @@ impl LossComputer for BinderLossComputer {
                 }
             }
         }
-        sum / (n_draws as f64 * BinderLossComputer::n_squared(state.labels.len() as CountType))
+        sum / (n_draws as f64 * BinderLossComputer::n_squared(state.n_items()))
     }
 
     fn change_in_loss(
@@ -855,8 +696,8 @@ impl LossComputer for BinderLossComputer {
             0
         };
         let n_draws = cms.len_of(Axis(2));
+        let mut sum = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64) / 2.0;
         let to_index = to_label as usize + 1;
-        let mut sum = (n_draws as f64) * ((state.sizes[to_index - 1] - offset) as f64) / 2.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             sum -= (cms[(to_index, other_index, draw_index)] - offset) as f64;
@@ -895,11 +736,11 @@ impl LossComputer for OMARILossComputer {
         self.n = 0;
         self.sum2 = 0.0;
         self.sums = Array2::<f64>::zeros((cms.len_of(Axis(2)), 2));
-        self.n = state.labels.len() as CountType;
+        self.n = state.n_items();
         self.sum2 = state
-            .occupied_clusters
+            .occupied_clusters()
             .iter()
-            .map(|i| OMARILossComputer::n_choose_2_times_2(state.sizes[*i as usize]))
+            .map(|i| OMARILossComputer::n_choose_2_times_2(state.size_of(*i)))
             .sum();
         let n_draws = cms.len_of(Axis(2));
         for draw_index in 0..n_draws {
@@ -907,7 +748,7 @@ impl LossComputer for OMARILossComputer {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
                     self.sums[(draw_index, 0)] += OMARILossComputer::n_choose_2_times_2(n);
-                    for main_label in state.occupied_clusters.iter() {
+                    for main_label in state.occupied_clusters().iter() {
                         self.sums[(draw_index, 1)] += OMARILossComputer::n_choose_2_times_2(
                             cms[(*main_label as usize + 1, other_index, draw_index)],
                         );
@@ -941,7 +782,7 @@ impl LossComputer for OMARILossComputer {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let n2 = (state.sizes[to_label as usize] - offset) as f64;
+        let n2 = (state.size_of(to_label) - offset) as f64;
         let nf = self.n as f64;
         let mut sum = 0.0;
         let to_index = to_label as usize + 1;
@@ -970,7 +811,7 @@ impl LossComputer for OMARILossComputer {
         draws: &Clusterings,
     ) {
         let n_draws = cms.len_of(Axis(2));
-        let n2 = state.sizes[to_label as usize] as f64;
+        let n2 = state.size_of(to_label) as f64;
         self.sum2 += n2;
         let to_index = to_label as usize + 1;
         for draw_index in 0..n_draws {
@@ -1000,9 +841,9 @@ impl<'a> VILossComputer<'a> {
 impl<'a> LossComputer for VILossComputer<'a> {
     fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let sum2: f64 = state
-            .occupied_clusters
+            .occupied_clusters()
             .iter()
-            .map(|i| self.cache.nlog2n(state.sizes[*i as usize]))
+            .map(|i| self.cache.nlog2n(state.size_of(*i)))
             .sum();
         let n_draws = cms.len_of(Axis(2));
         let mut sum = 0.0;
@@ -1012,7 +853,7 @@ impl<'a> LossComputer for VILossComputer<'a> {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
                     vi += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
-                    for main_label in state.occupied_clusters.iter() {
+                    for main_label in state.occupied_clusters().iter() {
                         vi -= 2.0
                             * self
                                 .cache
@@ -1020,7 +861,7 @@ impl<'a> LossComputer for VILossComputer<'a> {
                     }
                 }
             }
-            sum += (vi + sum2) / (state.labels.len() as f64);
+            sum += (vi + sum2) / (state.n_items() as f64);
         }
         sum / (n_draws as f64)
     }
@@ -1040,12 +881,12 @@ impl<'a> LossComputer for VILossComputer<'a> {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let to_index = to_label as usize + 1;
         let mut sum = (n_draws as f64)
             * self
                 .cache
-                .nlog2n_difference(state.sizes[to_index - 1 as usize] - offset)
+                .nlog2n_difference(state.size_of(to_label) - offset)
             / 2.0;
+        let to_index = to_label as usize + 1;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             let n12 = cms[(to_index, other_index, draw_index)] - offset;
@@ -1141,7 +982,7 @@ fn allocation_scan<T: LossComputer, U: Rng>(
             false => None,
         };
         let iter = state
-            .occupied_clusters
+            .occupied_clusters()
             .iter()
             .chain(label_of_empty_cluster.iter())
             .map(|to_label| {
