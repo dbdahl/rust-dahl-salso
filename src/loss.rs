@@ -181,59 +181,6 @@ pub fn omariapprox_multiple(
     }
 }
 
-// Expectation of the variation of information
-
-pub fn vi_single_kernel(cms: &ConfusionMatrices, cache: &Log2Cache) -> f64 {
-    let mut sum = 0.0;
-    let mut sum2 = 0.0;
-    let cm = &cms.vec[0];
-    for j in 0..cm.k2() {
-        sum2 += cache.nlog2n(cm.n2(j));
-    }
-    for cm in &cms.vec {
-        let mut vi = 0.0;
-        for i in 0..cm.k1() {
-            vi += cache.nlog2n(cm.n1(i));
-            for j in 0..cm.k2() {
-                vi -= 2.0 * cache.nlog2n(cm.n12(i, j));
-            }
-        }
-        sum += (vi + sum2) / (cm.n() as f64);
-    }
-    sum / (cms.vec.len() as f64)
-}
-
-pub fn vi_single(
-    labels: &[LabelType],
-    n_clusters: LabelType,
-    draws: &Clusterings,
-    cache: &Log2Cache,
-) -> f64 {
-    let cms = ConfusionMatrices::from_draws_filled(draws, labels, n_clusters);
-    vi_single_kernel(&cms, cache)
-}
-
-pub fn vi_multiple(
-    partitions: &PartitionsHolderBorrower,
-    draws: &PartitionsHolderBorrower,
-    results: &mut [f64],
-) {
-    let n_items = partitions.n_items();
-    assert_eq!(n_items, draws.n_items());
-    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
-    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
-    let cache = Log2Cache::new(n_items);
-    for k in 0..clusterings.n_clusterings() {
-        let vi = vi_single(
-            clusterings.labels(k),
-            clusterings.n_clusters(k),
-            &draws,
-            &cache,
-        );
-        unsafe { *results.get_unchecked_mut(k) = vi };
-    }
-}
-
 // Lower bound of the expectation of the variation of information
 
 pub fn vilb_expected_loss_constant(psm: &SquareMatrixBorrower) -> f64 {
@@ -411,7 +358,13 @@ mod tests_loss {
                 .collect();
             assert_relative_eq!(omariapprox_single(&part[..], psm_view), results[k]);
         }
-        vi_multiple(samples_view, samples_view, &mut results[..]);
+        let cache = Log2Cache::new(n_items);
+        compute_loss_multiple(
+            Box::new(|| VILossComputer::new(&cache)),
+            samples_view,
+            samples_view,
+            &mut results[..],
+        );
         vilb_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
             let part: Vec<LabelType> = samples_view

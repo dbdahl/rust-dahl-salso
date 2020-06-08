@@ -389,61 +389,6 @@ impl<'a> Computer for OneMinusARIapproxComputer<'a> {
     }
 }
 
-// Expectation of the variation of information loss
-
-pub struct VarOfInfoComputer<'a> {
-    cms: ConfusionMatrices<'a>,
-    cache: &'a Log2Cache,
-}
-
-impl<'a> VarOfInfoComputer<'a> {
-    pub fn new(draws: &'a Clusterings, cache: &'a Log2Cache) -> Self {
-        Self {
-            cms: ConfusionMatrices::from_draws_empty(draws),
-            cache,
-        }
-    }
-}
-
-impl<'a> Computer for VarOfInfoComputer<'a> {
-    fn expected_loss_kernel(&self) -> f64 {
-        vi_single_kernel(&self.cms, self.cache)
-    }
-
-    fn speculative_add(
-        &mut self,
-        _partition: &Partition,
-        i: usize,
-        subset_index: LabelType,
-    ) -> f64 {
-        let mut sum = 0.0;
-        sum += (self.cms.vec.len() as f64)
-            * self
-                .cache
-                .nlog2n_difference(self.cms.vec[0].n2(subset_index));
-        for cm in &self.cms.vec {
-            let subset_index_fixed = cm.label(i);
-            sum -= 2.0
-                * self
-                    .cache
-                    .nlog2n_difference(cm.n12(subset_index_fixed, subset_index));
-        }
-        sum
-    }
-
-    fn new_subset(&mut self, partition: &mut Partition) {
-        self.cms.new_subset(partition);
-    }
-
-    fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
-        self.cms.add_with_index(partition, i, subset_index)
-    }
-
-    fn remove(&mut self, partition: &mut Partition, i: usize) -> LabelType {
-        self.cms.remove(partition, i)
-    }
-}
-
 // Lower bound of the expectation of variation of information loss
 
 #[derive(Debug)]
