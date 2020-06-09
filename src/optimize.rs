@@ -190,26 +190,6 @@ impl CMLossComputer for OMARICMLossComputer {
                 }
             }
         }
-
-        /*
-        // Once decision_callback is fixed, we can get rid of this section.
-        let n_draws = cms.len_of(Axis(2));
-        self.sums = Array2::<f64>::zeros((n_draws, 2));
-        for draw_index in 0..n_draws {
-            for other_index in 0..cms.len_of(Axis(1)) {
-                let n = cms[(0, other_index, draw_index)];
-                if n > 0 {
-                    self.sums[(draw_index, 0)] += OMARICMLossComputer::n_choose_2_times_2(n);
-                    for main_label in state.occupied_clusters().iter() {
-                        self.sums[(draw_index, 1)] += OMARICMLossComputer::n_choose_2_times_2(
-                            cms[(*main_label as usize + 1, other_index, draw_index)],
-                        );
-                    }
-                }
-            }
-        }
-        */
-
         let mut sum = 0.0;
         let sum2 = self.sum2;
         let n_draws = self.sums.len_of(Axis(0));
@@ -280,7 +260,6 @@ impl CMLossComputer for OMARICMLossComputer {
             self.n += 1;
         }
         self.sum2 += 2.0 * state.size_of(to_label) as f64;
-
         let n_draws = cms.len_of(Axis(2));
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
@@ -300,46 +279,6 @@ impl CMLossComputer for OMARICMLossComputer {
                     2.0 * cms[(to_label as usize + 1, other_index, draw_index)] as f64;
             }
         }
-        /*
-        let n_draws = cms.len_of(Axis(2));
-        for draw_index in 0..n_draws {
-            let other_index = draws.label(draw_index, item_index) as usize;
-            let n = cms[(0, other_index, draw_index)];
-            if n > 0 {
-                self.sums[(draw_index, 0)] += OMARILossComputer::n_choose_2_times_2(n);
-                self.sums[(draw_index, 1)] -= OMARILossComputer::n_choose_2_times_2(
-                    cms[(
-                        from_label_option.unwrap() as usize + 1,
-                        other_index,
-                        draw_index,
-                    )],
-                );
-                self.sums[(draw_index, 1)] += OMARILossComputer::n_choose_2_times_2(
-                    cms[(*main_label as usize + 1, other_index, draw_index)],
-                );
-
-                for main_label in state.occupied_clusters().iter() {
-                    self.sums[(draw_index, 1)] += OMARILossComputer::n_choose_2_times_2(
-                        cms[(*main_label as usize + 1, other_index, draw_index)],
-                    );
-                }
-            }
-        }
-
-        let n_draws = cms.len_of(Axis(2));
-        let n2 = state.size_of(to_label) as f64;
-        self.sum2 += n2;
-        let to_index = to_label as usize + 1;
-        for draw_index in 0..n_draws {
-            let other_index = draws.label(draw_index, item_index) as usize;
-            let n1 = cms[(0, other_index, draw_index)] as f64;
-            if n1 > 0.0 {
-                self.sums[(draw_index, 0)] += n1;
-                let n12 = cms[(to_index, other_index, draw_index)] as f64;
-                self.sums[(draw_index, 1)] += n12;
-            }
-        }
-         */
     }
 }
 
