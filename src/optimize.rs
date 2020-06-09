@@ -191,6 +191,7 @@ impl CMLossComputer for OMARICMLossComputer {
             }
         }
 
+        /*
         // Once decision_callback is fixed, we can get rid of this section.
         let n_draws = cms.len_of(Axis(2));
         self.sums = Array2::<f64>::zeros((n_draws, 2));
@@ -207,6 +208,7 @@ impl CMLossComputer for OMARICMLossComputer {
                 }
             }
         }
+        */
 
         let mut sum = 0.0;
         let sum2 = self.sum2;
@@ -264,12 +266,12 @@ impl CMLossComputer for OMARICMLossComputer {
 
     fn decision_callback(
         &mut self,
-        _item_index: usize,
+        item_index: usize,
         to_label: LabelType,
         from_label_option: Option<LabelType>,
         state: &WorkingClustering,
-        _cms: &Array3<CountType>,
-        _draws: &Clusterings,
+        cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) {
         self.first = false;
         if from_label_option.is_some() {
@@ -279,6 +281,25 @@ impl CMLossComputer for OMARICMLossComputer {
         }
         self.sum2 += 2.0 * state.size_of(to_label) as f64;
 
+        let n_draws = cms.len_of(Axis(2));
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let n = cms[(0, other_index, draw_index)];
+            if n > 0 {
+                if from_label_option.is_some() {
+                    self.sums[(draw_index, 1)] -= 2.0
+                        * (cms[(
+                            from_label_option.unwrap() as usize + 1,
+                            other_index,
+                            draw_index,
+                        )] - 1) as f64;
+                } else {
+                    self.sums[(draw_index, 0)] += 2.0 * n as f64;
+                }
+                self.sums[(draw_index, 1)] +=
+                    2.0 * cms[(to_label as usize + 1, other_index, draw_index)] as f64;
+            }
+        }
         /*
         let n_draws = cms.len_of(Axis(2));
         for draw_index in 0..n_draws {
