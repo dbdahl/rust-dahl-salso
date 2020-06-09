@@ -27,10 +27,13 @@ use std::time::{Duration, SystemTime};
 // **************************************************************
 
 pub trait CMLossComputer {
-    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64;
+    #[allow(unused_variables)]
+    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {}
+
+    fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64;
 
     fn change_in_loss(
-        &mut self,
+        &self,
         item_index: usize,
         to_label: LabelType,
         from_label_option: Option<LabelType>,
@@ -46,15 +49,16 @@ pub trait CMLossComputer {
             let n_draws = cms.len_of(Axis(2));
             state.reassign(item_index, to_label);
             let to_index = to_label as usize + 1;
+            let from_index = if from_label_option.is_some() {
+                from_label_option.unwrap() as usize + 1
+            } else {
+                0
+            };
             for draw_index in 0..n_draws {
                 let other_index = draws.label(draw_index, item_index) as usize;
                 cms[(to_index, other_index, draw_index)] += 1;
                 if from_label_option.is_some() {
-                    cms[(
-                        from_label_option.unwrap() as usize + 1,
-                        other_index,
-                        draw_index,
-                    )] -= 1;
+                    cms[(from_index, other_index, draw_index)] -= 1;
                 }
             }
             self.compute_loss(&state, &cms)
@@ -90,7 +94,7 @@ impl BinderCMLossComputer {
 }
 
 impl CMLossComputer for BinderCMLossComputer {
-    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
+    fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let mut sum: f64 = state
             .occupied_clusters()
             .iter()
@@ -116,7 +120,7 @@ impl CMLossComputer for BinderCMLossComputer {
     }
 
     fn change_in_loss(
-        &mut self,
+        &self,
         item_index: usize,
         to_label: LabelType,
         from_label_option: Option<LabelType>,
@@ -143,7 +147,6 @@ impl CMLossComputer for BinderCMLossComputer {
 // Expectation of one minus the adjusted Rand index loss
 
 pub struct OMARICMLossComputer {
-    first: bool,
     n: CountType,
     sum2: f64,
     sums: Array2<f64>,
@@ -152,7 +155,6 @@ pub struct OMARICMLossComputer {
 impl OMARICMLossComputer {
     pub fn new(n_draws: usize) -> Self {
         Self {
-            first: true,
             n: 0,
             sum2: 0.0,
             sums: Array2::<f64>::zeros((n_draws, 2)),
@@ -166,30 +168,30 @@ impl OMARICMLossComputer {
 }
 
 impl CMLossComputer for OMARICMLossComputer {
-    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
-        if self.first {
-            self.first = false;
-            self.n = state.n_items();
-            self.sum2 = state
-                .occupied_clusters()
-                .iter()
-                .map(|i| OMARICMLossComputer::n_choose_2_times_2(state.size_of(*i)))
-                .sum();
-            let n_draws = cms.len_of(Axis(2));
-            for draw_index in 0..n_draws {
-                for other_index in 0..cms.len_of(Axis(1)) {
-                    let n = cms[(0, other_index, draw_index)];
-                    if n > 0 {
-                        self.sums[(draw_index, 0)] += OMARICMLossComputer::n_choose_2_times_2(n);
-                        for main_label in state.occupied_clusters().iter() {
-                            self.sums[(draw_index, 1)] += OMARICMLossComputer::n_choose_2_times_2(
-                                cms[(*main_label as usize + 1, other_index, draw_index)],
-                            );
-                        }
+    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+        self.n = state.n_items();
+        self.sum2 = state
+            .occupied_clusters()
+            .iter()
+            .map(|i| OMARICMLossComputer::n_choose_2_times_2(state.size_of(*i)))
+            .sum();
+        let n_draws = cms.len_of(Axis(2));
+        for draw_index in 0..n_draws {
+            for other_index in 0..cms.len_of(Axis(1)) {
+                let n = cms[(0, other_index, draw_index)];
+                if n > 0 {
+                    self.sums[(draw_index, 0)] += OMARICMLossComputer::n_choose_2_times_2(n);
+                    for main_label in state.occupied_clusters().iter() {
+                        self.sums[(draw_index, 1)] += OMARICMLossComputer::n_choose_2_times_2(
+                            cms[(*main_label as usize + 1, other_index, draw_index)],
+                        );
                     }
                 }
             }
         }
+    }
+
+    fn compute_loss(&self, _state: &WorkingClustering, _cms: &Array3<CountType>) -> f64 {
         let mut sum = 0.0;
         let sum2 = self.sum2;
         let sum2_div_denom = sum2 / OMARICMLossComputer::n_choose_2_times_2(self.n);
@@ -207,7 +209,7 @@ impl CMLossComputer for OMARICMLossComputer {
     }
 
     fn change_in_loss(
-        &mut self,
+        &self,
         item_index: usize,
         to_label: LabelType,
         from_label_option: Option<LabelType>,
@@ -274,7 +276,6 @@ impl CMLossComputer for OMARICMLossComputer {
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) {
-        self.first = false;
         self.sum2 += 2.0 * state.size_of(to_label) as f64;
         let to_index = to_label as usize + 1;
         let from_index = if from_label_option.is_some() {
@@ -314,7 +315,7 @@ impl<'a> VICMLossComputer<'a> {
 }
 
 impl<'a> CMLossComputer for VICMLossComputer<'a> {
-    fn compute_loss(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
+    fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let sum2: f64 = state
             .occupied_clusters()
             .iter()
@@ -342,7 +343,7 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
     }
 
     fn change_in_loss(
-        &mut self,
+        &self,
         item_index: usize,
         to_label: LabelType,
         from_label_option: Option<LabelType>,
