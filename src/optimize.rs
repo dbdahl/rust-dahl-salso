@@ -45,9 +45,10 @@ pub trait CMLossComputer {
             let mut cms = cms.clone();
             let n_draws = cms.len_of(Axis(2));
             state.reassign(item_index, to_label);
+            let to_index = to_label as usize + 1;
             for draw_index in 0..n_draws {
                 let other_index = draws.label(draw_index, item_index) as usize;
-                cms[(to_label as usize + 1, other_index, draw_index)] += 1;
+                cms[(to_index, other_index, draw_index)] += 1;
                 if from_label_option.is_some() {
                     cms[(
                         from_label_option.unwrap() as usize + 1,
