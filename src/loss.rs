@@ -1,8 +1,10 @@
 use dahl_partition::*;
 
 use crate::clustering::{Clusterings, WorkingClustering};
-use crate::confusion::{ConfusionMatrices, Log2Cache};
-use crate::optimize::{BinderLossComputer, LossComputer, OMARILossComputer, VILossComputer};
+use crate::log2cache::Log2Cache;
+use crate::optimize::{
+    BinderCMLossComputer, CMLossComputer, OMARICMLossComputer, VICMLossComputer,
+};
 use crate::*;
 use std::slice;
 
@@ -56,72 +58,6 @@ pub fn binder_multiple(
             }
         }
         unsafe { *results.get_unchecked_mut(k) = multiplier * (sum + sum_p) };
-    }
-}
-
-pub fn compute_loss_multiple<'a, T: LossComputer>(
-    loss_computer_factory: Box<dyn Fn() -> T + 'a>,
-    partitions: &PartitionsHolderBorrower,
-    draws: &PartitionsHolderBorrower,
-    results: &mut [f64],
-) {
-    let n_items = partitions.n_items();
-    assert_eq!(n_items, draws.n_items());
-    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
-    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
-    for k in 0..clusterings.n_clusterings() {
-        let mut loss_computer = loss_computer_factory();
-        let state = WorkingClustering::from_slice(clusterings.labels(k), clusterings.n_clusters(k));
-        let cms = draws.make_confusion_matrices(&state);
-        unsafe { *results.get_unchecked_mut(k) = loss_computer.compute_loss(&state, &cms) };
-    }
-}
-
-// Expectation of one minus adjusted Rand index
-
-pub fn omari_single_kernel(cms: &ConfusionMatrices) -> f64 {
-    pub fn n_choose_2_times_2(x: CountType) -> f64 {
-        let x = x as f64;
-        x * (x - 1.0)
-    }
-    let mut sum = 0.0;
-    let mut sum2 = 0.0;
-    let cm = &cms.vec[0];
-    for j in 0..cm.k2() {
-        sum2 += n_choose_2_times_2(cm.n2(j));
-    }
-    for cm in &cms.vec {
-        let mut sum1 = 0.0;
-        let mut sum12 = 0.0;
-        for i in 0..cm.k1() {
-            sum1 += n_choose_2_times_2(cm.n1(i));
-            for j in 0..cm.k2() {
-                sum12 += n_choose_2_times_2(cm.n12(i, j));
-            }
-        }
-        let offset = sum1 * sum2 / n_choose_2_times_2(cms.vec[0].n());
-        sum += (sum12 - offset) / (0.5 * (sum1 + sum2) - offset);
-    }
-    1.0 - sum / (cms.vec.len() as f64)
-}
-
-pub fn omari_single(labels: &[LabelType], n_clusters: LabelType, draws: &Clusterings) -> f64 {
-    let cms = ConfusionMatrices::from_draws_filled(draws, labels, n_clusters);
-    omari_single_kernel(&cms)
-}
-
-pub fn omari_multiple(
-    partitions: &PartitionsHolderBorrower,
-    draws: &PartitionsHolderBorrower,
-    results: &mut [f64],
-) {
-    let n_items = partitions.n_items();
-    assert_eq!(n_items, draws.n_items());
-    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
-    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
-    for k in 0..clusterings.n_clusterings() {
-        let omari = omari_single(clusterings.labels(k), clusterings.n_clusters(k), &draws);
-        unsafe { *results.get_unchecked_mut(k) = omari };
     }
 }
 
@@ -273,6 +209,28 @@ pub fn vilb_multiple(
     }
 }
 
+// General computation of expected loss for losses based on confusion matrices.
+
+pub fn compute_loss_multiple<'a, T: CMLossComputer>(
+    loss_computer_factory: Box<dyn Fn() -> T + 'a>,
+    partitions: &PartitionsHolderBorrower,
+    draws: &PartitionsHolderBorrower,
+    results: &mut [f64],
+) {
+    let n_items = partitions.n_items();
+    assert_eq!(n_items, draws.n_items());
+    let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
+    let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
+    for k in 0..clusterings.n_clusterings() {
+        let mut loss_computer = loss_computer_factory();
+        let state = WorkingClustering::from_slice(clusterings.labels(k), clusterings.n_clusters(k));
+        let cms = draws.make_confusion_matrices(&state);
+        unsafe { *results.get_unchecked_mut(k) = loss_computer.compute_loss(&state, &cms) };
+    }
+}
+
+// API for R
+
 #[no_mangle]
 pub unsafe extern "C" fn dahl_salso__expected_loss(
     n_partitions: i32,
@@ -295,13 +253,13 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     match loss_function {
         Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
         Some(LossFunction::Binder2) => compute_loss_multiple(
-            Box::new(|| BinderLossComputer::new()),
+            Box::new(|| BinderCMLossComputer::new()),
             &partitions,
             &draws,
             results,
         ),
         Some(LossFunction::OneMinusARI) => compute_loss_multiple(
-            Box::new(|| OMARILossComputer::new(nd)),
+            Box::new(|| OMARICMLossComputer::new(nd)),
             &partitions,
             &draws,
             results,
@@ -310,7 +268,7 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
         Some(LossFunction::VI) => {
             let cache = Log2Cache::new(ni);
             compute_loss_multiple(
-                Box::new(|| VILossComputer::new(&cache)),
+                Box::new(|| VICMLossComputer::new(&cache)),
                 &partitions,
                 &draws,
                 results,
@@ -347,7 +305,12 @@ mod tests_loss {
                 .collect();
             assert_relative_eq!(binder_single(&part[..], psm_view), results[k]);
         }
-        omari_multiple(samples_view, samples_view, &mut results[..]);
+        compute_loss_multiple(
+            Box::new(|| OMARICMLossComputer::new(n_partitions)),
+            samples_view,
+            samples_view,
+            &mut results[..],
+        );
         omariapprox_multiple(samples_view, psm_view, &mut results[..]);
         for k in 0..n_partitions {
             let part: Vec<LabelType> = samples_view
@@ -360,7 +323,7 @@ mod tests_loss {
         }
         let cache = Log2Cache::new(n_items);
         compute_loss_multiple(
-            Box::new(|| VILossComputer::new(&cache)),
+            Box::new(|| VICMLossComputer::new(&cache)),
             samples_view,
             samples_view,
             &mut results[..],

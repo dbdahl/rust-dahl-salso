@@ -5,7 +5,7 @@
 extern crate approx;
 
 pub mod clustering;
-pub mod confusion;
+pub mod log2cache;
 pub mod loss;
 pub mod optimize;
 pub mod psm;
