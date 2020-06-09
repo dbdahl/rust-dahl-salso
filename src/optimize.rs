@@ -192,10 +192,11 @@ impl CMLossComputer for OMARICMLossComputer {
         }
         let mut sum = 0.0;
         let sum2 = self.sum2;
+        let sum2_div_denom = sum2 / OMARICMLossComputer::n_choose_2_times_2(self.n);
         let n_draws = self.sums.len_of(Axis(0));
         for draw_index in 0..n_draws {
             let sum1 = self.sums[(draw_index, 0)];
-            let offset = sum1 * sum2 / OMARICMLossComputer::n_choose_2_times_2(self.n);
+            let offset = sum1 * sum2_div_denom;
             let denominator = 0.5 * (sum1 + sum2) - offset;
             if denominator > 0.0 {
                 let numerator = self.sums[(draw_index, 1)] - offset;
@@ -254,29 +255,27 @@ impl CMLossComputer for OMARICMLossComputer {
         draws: &Clusterings,
     ) {
         self.first = false;
-        if from_label_option.is_some() {
+        self.sum2 += 2.0 * state.size_of(to_label) as f64;
+        let to_index = to_label as usize + 1;
+        let from_index = if from_label_option.is_some() {
             self.sum2 -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
+            from_label_option.unwrap() as usize + 1
         } else {
             self.n += 1;
-        }
-        self.sum2 += 2.0 * state.size_of(to_label) as f64;
+            0
+        };
         let n_draws = cms.len_of(Axis(2));
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             let n = cms[(0, other_index, draw_index)];
             if n > 0 {
                 if from_label_option.is_some() {
-                    self.sums[(draw_index, 1)] -= 2.0
-                        * (cms[(
-                            from_label_option.unwrap() as usize + 1,
-                            other_index,
-                            draw_index,
-                        )] - 1) as f64;
+                    self.sums[(draw_index, 1)] -=
+                        2.0 * (cms[(from_index, other_index, draw_index)] - 1) as f64;
                 } else {
                     self.sums[(draw_index, 0)] += 2.0 * n as f64;
                 }
-                self.sums[(draw_index, 1)] +=
-                    2.0 * cms[(to_label as usize + 1, other_index, draw_index)] as f64;
+                self.sums[(draw_index, 1)] += 2.0 * cms[(to_index, other_index, draw_index)] as f64;
             }
         }
     }
