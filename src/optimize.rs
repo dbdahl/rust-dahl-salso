@@ -174,7 +174,6 @@ impl CMLossComputer for OMARICMLossComputer {
                 .iter()
                 .map(|i| OMARICMLossComputer::n_choose_2_times_2(state.size_of(*i)))
                 .sum();
-            self.first = false;
             let n_draws = cms.len_of(Axis(2));
             for draw_index in 0..n_draws {
                 for other_index in 0..cms.len_of(Axis(1)) {
@@ -208,41 +207,61 @@ impl CMLossComputer for OMARICMLossComputer {
 
     fn change_in_loss(
         &mut self,
-        _item_index: usize,
-        _to_label: LabelType,
-        _from_label_option: Option<LabelType>,
-        _state: &WorkingClustering,
-        _cms: &Array3<CountType>,
-        _draws: &Clusterings,
+        item_index: usize,
+        to_label: LabelType,
+        from_label_option: Option<LabelType>,
+        state: &WorkingClustering,
+        cms: &Array3<CountType>,
+        draws: &Clusterings,
     ) -> f64 {
-        // This is just a dummy for testing purposes.
-        let mut rng = rand::thread_rng();
-        return rng.gen_range(0.0, 1.0);
-        /*
         let offset = if from_label_option.is_some() && to_label == from_label_option.unwrap() {
             1
         } else {
             0
         };
-        let n_draws = cms.len_of(Axis(2));
-        let n2 = (state.size_of(to_label) - offset) as f64;
-        let nf = self.n as f64;
-        let mut sum = 0.0;
+        let mut sum2 = if offset == 0 {
+            self.sum2 + 2.0 * state.size_of(to_label) as f64
+        } else {
+            self.sum2
+        };
         let to_index = to_label as usize + 1;
-        for draw_index in 0..n_draws {
-            let mut temp = self.sum2 + n2;
-            let other_index = draws.label(draw_index, item_index) as usize;
-            let n1 = (cms[(0, other_index, draw_index)] - offset) as f64;
-            if n1 > 0.0 {
-                let n12 = (cms[(to_index, other_index, draw_index)] - offset) as f64;
-                temp += self.sums[(draw_index, 0)] + n1 - 2.0 * (self.sums[(draw_index, 1)] + n12);
+        let mut n = self.n;
+        let from_index = if from_label_option.is_some() {
+            if offset == 0 {
+                sum2 -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
             }
-            temp /= 0.5 * (self.sum2 + n2 + self.sums[(draw_index, 0)] + n1)
-                - (self.sum2 + n2) * (self.sums[(draw_index, 0)] + n1) / ((nf + 1.0) * nf / 2.0);
-            sum += temp;
+            from_label_option.unwrap() as usize + 1
+        } else {
+            n += 1;
+            0
+        };
+        let sum2_div_denom = sum2 / OMARICMLossComputer::n_choose_2_times_2(n);
+        let mut sum = 0.0;
+        let n_draws = self.sums.len_of(Axis(0));
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let sum1 = self.sums[(draw_index, 0)]
+                + if from_label_option.is_none() {
+                    2.0 * n as f64
+                } else {
+                    0.0
+                };
+            let chance_adjustment = sum1 * sum2_div_denom;
+            let denominator = 0.5 * (sum1 + sum2) - chance_adjustment;
+            if denominator > 0.0 {
+                let mut unadjusted_numerator = self.sums[(draw_index, 1)];
+                if offset == 0 {
+                    unadjusted_numerator += 2.0 * cms[(to_index, other_index, draw_index)] as f64;
+                    if from_label_option.is_some() {
+                        unadjusted_numerator -=
+                            2.0 * (cms[(from_index, other_index, draw_index)] - 1) as f64;
+                    }
+                }
+                let numerator = unadjusted_numerator - chance_adjustment;
+                sum += numerator / denominator;
+            }
         }
-        sum
-        */
+        1.0 - sum / (n_draws as f64)
     }
 
     fn decision_callback(
