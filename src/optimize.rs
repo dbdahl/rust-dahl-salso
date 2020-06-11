@@ -1,6 +1,5 @@
 extern crate ndarray;
 extern crate num_cpus;
-extern crate num_traits;
 extern crate rand;
 
 use self::ndarray::{Array2, Array3, Axis};
@@ -11,11 +10,8 @@ use crate::*;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
 use rand::seq::SliceRandom;
-use rand::Rng;
-use rand::SeedableRng;
-use rand_distr::{Distribution, Gamma};
+use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
-use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::f64;
 use std::slice;
@@ -374,39 +370,16 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
 
 // Common
 
-fn select_label<'a, I, U>(pairs: I, exploration_parameter: f64, rng: &mut U) -> LabelType
-where
-    I: Iterator<Item = (LabelType, f64)>,
-    U: Rng,
-{
-    if exploration_parameter >= 1.0 || rng.gen_range(0.0, 1.0) < exploration_parameter {
-        let mut s0 = f64::INFINITY;
-        let mut l0 = 0;
-        for pair in pairs {
-            if pair.1 < s0 {
-                s0 = pair.1;
-                l0 = pair.0;
-            }
+fn find_label_of_minimum<I: Iterator<Item = (LabelType, f64)>>(pairs: I) -> LabelType {
+    let mut s0 = f64::INFINITY;
+    let mut l0 = 0;
+    for pair in pairs {
+        if pair.1 < s0 {
+            s0 = pair.1;
+            l0 = pair.0;
         }
-        l0
-    } else {
-        let mut s0 = f64::INFINITY;
-        let mut s1 = f64::INFINITY;
-        let mut l0 = 0;
-        let mut l1 = 0;
-        for pair in pairs {
-            if pair.1 < s0 {
-                s1 = s0;
-                s0 = pair.1;
-                l1 = l0;
-                l0 = pair.0;
-            } else if pair.1 < s1 {
-                s1 = pair.1;
-                l1 = pair.0;
-            }
-        }
-        l1
     }
+    l0
 }
 
 fn allocation_scan<T: CMLossComputer, U: Rng>(
@@ -415,7 +388,7 @@ fn allocation_scan<T: CMLossComputer, U: Rng>(
     cms: &mut Array3<CountType>,
     permutation: &Vec<usize>,
     loss_computer: &mut T,
-    exploration_parameter: f64,
+    probability_of_empty_cluster: f64,
     draws: &Clusterings,
     rng: &mut U,
 ) -> bool {
@@ -427,24 +400,31 @@ fn allocation_scan<T: CMLossComputer, U: Rng>(
             true => Some(state.get(item_index)),
             false => None,
         };
-        let iter = state
-            .occupied_clusters()
-            .iter()
-            .chain(label_of_empty_cluster.iter())
-            .map(|to_label| {
-                (
-                    *to_label,
-                    loss_computer.change_in_loss(
-                        item_index,
+        let to_label = if !sweetening_scan
+            && label_of_empty_cluster.is_some()
+            && rng.gen_range(0.0, 1.0) < probability_of_empty_cluster
+        {
+            label_of_empty_cluster.unwrap()
+        } else {
+            let iter = state
+                .occupied_clusters()
+                .iter()
+                .chain(label_of_empty_cluster.iter())
+                .map(|to_label| {
+                    (
                         *to_label,
-                        from_label_option,
-                        &state,
-                        &cms,
-                        &draws,
-                    ),
-                )
-            });
-        let to_label = select_label(iter, exploration_parameter, rng);
+                        loss_computer.change_in_loss(
+                            item_index,
+                            *to_label,
+                            from_label_option,
+                            &state,
+                            &cms,
+                            &draws,
+                        ),
+                    )
+                });
+            find_label_of_minimum(iter)
+        };
         if !sweetening_scan || to_label != from_label_option.unwrap() {
             loss_computer.decision_callback(
                 item_index,
@@ -491,7 +471,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     let max_size = match p.max_size {
         0 => {
             let (mean, sd) = draws.mean_and_sd_of_n_clusters();
-            (mean + 2.0 * sd).round() as LabelType
+            (mean + 2.0 * sd).ceil() as LabelType
         }
         _ => p.max_size,
     };
@@ -513,7 +493,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             &mut cms,
             &permutation,
             &mut loss_computer,
-            p.probability_of_exploration_probability_at_zero,
+            p.probability_of_empty_cluster,
             draws,
             rng,
         );
@@ -541,6 +521,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 clustering,
                 expected_loss,
                 n_scans: scan_counter,
+                max_size: max_size as u32,
                 ..best
             }
         }
@@ -929,91 +910,48 @@ impl<'a> GeneralLossComputer for VILBGLossComputer<'a> {
 
 // Common
 
-fn cmp_f64(a: &f64, b: &f64) -> Ordering {
-    if a.is_nan() {
-        Ordering::Greater
-    } else if b.is_nan() {
-        Ordering::Less
-    } else if a < b {
-        Ordering::Less
-    } else if a > b {
-        Ordering::Greater
-    } else {
-        Ordering::Equal
-    }
-}
-
-fn cmp_f64_with_enumeration<T: num_traits::PrimInt>(a: &(T, f64), b: &(T, f64)) -> Ordering {
-    if a.1.is_nan() {
-        Ordering::Greater
-    } else if b.1.is_nan() {
-        Ordering::Less
-    } else if a.1 < b.1 {
-        Ordering::Less
-    } else if a.1 > b.1 {
-        Ordering::Greater
-    } else {
-        Ordering::Equal
-    }
-}
-
-fn ensure_empty_subset<U: GeneralLossComputer>(
+fn label_of_empty_cluster<U: GeneralLossComputer>(
     partition: &mut Partition,
     computer: &mut U,
     max_label: LabelType,
-) {
+) -> Option<LabelType> {
     match partition.subsets().last() {
-        None => computer.new_subset(partition),
+        None => {
+            computer.new_subset(partition);
+            Some(0)
+        }
         Some(last) => {
-            if !last.is_empty() && partition.n_subsets() <= max_label as usize {
-                computer.new_subset(partition)
+            if last.is_empty() {
+                Some(partition.n_subsets() as LabelType - 1)
+            } else {
+                if partition.n_subsets() <= max_label as usize {
+                    computer.new_subset(partition);
+                    Some(partition.n_subsets() as LabelType - 1)
+                } else {
+                    None
+                }
             }
         }
     }
 }
 
-fn micro_optimized_allocation<T: Rng, U: GeneralLossComputer>(
+fn micro_optimized_allocation<U: GeneralLossComputer>(
     partition: &mut Partition,
     computer: &mut U,
     i: usize,
-    probability_of_exploration: f64,
-    rng: &mut T,
+    take_empty: bool,
 ) -> LabelType {
-    let max_label = partition.n_subsets() - 1;
-    let mut iter = (0..=max_label)
-        .map(|subset_index| computer.speculative_add(partition, i, subset_index as LabelType))
-        .enumerate();
-    let take_best = if probability_of_exploration > 0.0 {
-        rng.gen_range(0.0, 1.0) >= probability_of_exploration
-    } else {
-        true
-    };
-    let subset_index = if take_best {
-        iter.min_by(cmp_f64_with_enumeration).unwrap().0
-    } else {
-        let mut first_best = iter.next().unwrap();
-        let second_best_option = iter.next();
-        if second_best_option.is_none() {
-            first_best.0
+    let max_label = partition.n_subsets() as LabelType - 1;
+    let iter = (0..=max_label).map(|subset_index| {
+        let value = computer.speculative_add(partition, i, subset_index as LabelType);
+        if take_empty && (&partition.subsets()[subset_index as usize]).is_empty() {
+            (subset_index, f64::NEG_INFINITY)
         } else {
-            let mut second_best = second_best_option.unwrap();
-            if cmp_f64_with_enumeration(&first_best, &second_best) == Ordering::Greater {
-                std::mem::swap(&mut first_best, &mut second_best);
-            }
-            for tuple in iter {
-                if cmp_f64_with_enumeration(&tuple, &second_best) == Ordering::Less {
-                    if cmp_f64_with_enumeration(&tuple, &first_best) == Ordering::Less {
-                        second_best = first_best;
-                        first_best = tuple;
-                    } else {
-                        second_best = tuple;
-                    }
-                }
-            }
-            second_best.0
+            (subset_index, value)
         }
-    };
-    computer.add_with_index(partition, i, subset_index as LabelType);
+    });
+    let subset_index = find_label_of_minimum(iter);
+    computer.add_with_index(partition, i, subset_index);
     subset_index as LabelType
 }
 
@@ -1023,20 +961,10 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     stop_time: &SystemTime,
     rng: &mut T,
 ) -> SALSOResults {
-    let max_label = if p.max_size == 0 {
-        LabelType::max_value()
-    } else {
-        p.max_size - 1
-    };
-    let probability_of_exploration_distribution = Gamma::new(
-        p.probability_of_exploration_shape,
-        1.0 / p.probability_of_exploration_rate,
-    )
-    .unwrap();
+    let max_label = p.max_size.max(1) - 1;
     let mut global_minimum = std::f64::INFINITY;
     let mut global_best = Partition::new(p.n_items);
     let mut global_n_scans = 0;
-    let mut global_pr_explore = 0.0;
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut run_counter = 0;
     while run_counter < p.n_runs {
@@ -1044,66 +972,29 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
         let mut partition = Partition::new(p.n_items);
         permutation.shuffle(rng);
         // Initial allocation
-        let pr_explore =
-            if p.max_scans == 0 || p.probability_of_exploration_probability_at_zero >= 1.0 {
-                0.0
-            } else {
-                if p.probability_of_exploration_probability_at_zero < 0.0 {
-                    -p.probability_of_exploration_probability_at_zero
-                } else {
-                    if rng.gen_range(0.0, 1.0) <= p.probability_of_exploration_probability_at_zero {
-                        0.0
-                    } else {
-                        probability_of_exploration_distribution.sample(rng).min(1.0)
-                    }
-                }
-            };
         for i in 0..p.n_items {
-            ensure_empty_subset(&mut partition, &mut computer, max_label);
+            let label_of_empty_cluster =
+                label_of_empty_cluster(&mut partition, &mut computer, max_label);
             let ii = unsafe { *permutation.get_unchecked(i) };
-            micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
+            let take_empty = label_of_empty_cluster.is_some()
+                && rng.gen_range(0.0, 1.0) < p.probability_of_empty_cluster;
+            micro_optimized_allocation(&mut partition, &mut computer, ii, take_empty);
         }
         // Sweetening scans
-        let mut stop_sweetening = false;
         let mut n_scans = 0;
-        while n_scans < p.max_scans {
-            if n_scans == p.max_scans - 1 {
-                stop_sweetening = true;
-            }
+        let mut no_change = true;
+        while no_change && n_scans < p.max_scans {
+            n_scans += 1;
             permutation.shuffle(rng);
-            let mut no_change = true;
-            let pr_explore = if stop_sweetening
-                || p.probability_of_exploration_probability_at_zero >= 1.0
-            {
-                0.0
-            } else {
-                if p.probability_of_exploration_probability_at_zero < 0.0 {
-                    -p.probability_of_exploration_probability_at_zero
-                } else {
-                    if rng.gen_range(0.0, 1.0) <= p.probability_of_exploration_probability_at_zero {
-                        0.0
-                    } else {
-                        probability_of_exploration_distribution.sample(rng).min(1.0)
-                    }
-                }
-            };
             for i in 0..p.n_items {
-                ensure_empty_subset(&mut partition, &mut computer, max_label);
+                label_of_empty_cluster(&mut partition, &mut computer, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = computer.remove(&mut partition, ii);
                 let subset_index =
-                    micro_optimized_allocation(&mut partition, &mut computer, ii, pr_explore, rng);
+                    micro_optimized_allocation(&mut partition, &mut computer, ii, false);
                 if subset_index != previous_subset_index {
                     no_change = false;
                 };
-            }
-            n_scans += 1;
-            if no_change {
-                if stop_sweetening {
-                    break;
-                } else {
-                    stop_sweetening = true;
-                }
             }
         }
         let value = computer.expected_loss_kernel();
@@ -1111,7 +1002,6 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             global_minimum = value;
             global_best = partition;
             global_n_scans = n_scans;
-            global_pr_explore = pr_explore;
         }
         run_counter += 1;
         if SystemTime::now() > *stop_time {
@@ -1121,8 +1011,8 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
                 labels,
                 global_minimum,
                 global_n_scans,
-                global_pr_explore,
                 run_counter,
+                p.max_size as u32,
             );
         }
     }
@@ -1133,8 +1023,8 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
         labels,
         global_minimum,
         global_n_scans,
-        global_pr_explore,
         run_counter,
+        p.max_size as u32,
     )
 }
 
@@ -1146,17 +1036,15 @@ pub struct SALSOParameters {
     max_size: LabelType,
     max_scans: u32,
     n_runs: u32,
-    probability_of_exploration_probability_at_zero: f64,
-    probability_of_exploration_shape: f64,
-    probability_of_exploration_rate: f64,
+    probability_of_empty_cluster: f64,
 }
 
 pub struct SALSOResults {
     clustering: Vec<usize>,
     expected_loss: f64,
     n_scans: u32,
-    prob_exploration: f64,
     n_runs: u32,
+    max_size: u32,
 }
 
 impl SALSOResults {
@@ -1164,20 +1052,20 @@ impl SALSOResults {
         clustering: Vec<usize>,
         expected_loss: f64,
         n_scans: u32,
-        prob_exploration: f64,
         n_runs: u32,
+        max_size: u32,
     ) -> Self {
         Self {
             clustering,
             expected_loss,
             n_scans,
-            prob_exploration,
             n_runs,
+            max_size,
         }
     }
 
     pub fn dummy() -> Self {
-        SALSOResults::new(vec![0usize; 0], std::f64::INFINITY, 0, 0.0, 0)
+        SALSOResults::new(vec![0usize; 0], std::f64::INFINITY, 0, 0, 0)
     }
 }
 
@@ -1377,9 +1265,7 @@ mod tests_optimize {
             max_size: 2,
             max_scans: 10,
             n_runs: 100,
-            probability_of_exploration_probability_at_zero: 0.5,
-            probability_of_exploration_shape: 0.5,
-            probability_of_exploration_rate: 50.0,
+            probability_of_empty_cluster: 0.5,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
@@ -1405,16 +1291,14 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     max_size: i32,
     max_scans: i32,
     n_runs: i32,
-    probability_of_exploration_probability_at_zero: f64,
-    probability_of_exploration_shape: f64,
-    probability_of_exploration_rate: f64,
+    probability_of_empty_cluster: f64,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
     results_expected_loss_ptr: *mut f64,
     results_scans_ptr: *mut i32,
-    results_pr_explore_ptr: *mut f64,
     results_n_runs_ptr: *mut i32,
+    results_max_size_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let n_items = usize::try_from(n_items).unwrap();
@@ -1455,9 +1339,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         max_size,
         max_scans,
         n_runs,
-        probability_of_exploration_probability_at_zero,
-        probability_of_exploration_shape,
-        probability_of_exploration_rate,
+        probability_of_empty_cluster,
     };
     let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
@@ -1466,8 +1348,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     }
     *results_expected_loss_ptr = results.expected_loss;
     *results_scans_ptr = i32::try_from(results.n_scans).unwrap();
-    *results_pr_explore_ptr = f64::try_from(results.prob_exploration).unwrap();
     *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
+    *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
 }
 
 #[no_mangle]
