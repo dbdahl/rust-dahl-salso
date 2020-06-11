@@ -982,8 +982,9 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
         }
         // Sweetening scans
         let mut n_scans = 0;
-        let mut no_change = true;
-        while no_change && n_scans < p.max_scans {
+        let mut change = true;
+        while change && n_scans < p.max_scans {
+            change = false;
             n_scans += 1;
             permutation.shuffle(rng);
             for i in 0..p.n_items {
@@ -993,7 +994,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
                 let subset_index =
                     micro_optimized_allocation(&mut partition, &mut computer, ii, false);
                 if subset_index != previous_subset_index {
-                    no_change = false;
+                    change = true;
                 };
             }
         }
