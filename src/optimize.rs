@@ -521,7 +521,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 clustering,
                 expected_loss,
                 n_scans: scan_counter,
-                max_size: max_size as u32,
+                max_size,
                 ..best
             }
         }
@@ -1012,7 +1012,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
                 global_minimum,
                 global_n_scans,
                 run_counter,
-                p.max_size as u32,
+                p.max_size,
             );
         }
     }
@@ -1024,7 +1024,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
         global_minimum,
         global_n_scans,
         run_counter,
-        p.max_size as u32,
+        p.max_size,
     )
 }
 
@@ -1044,7 +1044,7 @@ pub struct SALSOResults {
     expected_loss: f64,
     n_scans: u32,
     n_runs: u32,
-    max_size: u32,
+    max_size: LabelType,
 }
 
 impl SALSOResults {
@@ -1053,7 +1053,7 @@ impl SALSOResults {
         expected_loss: f64,
         n_scans: u32,
         n_runs: u32,
-        max_size: u32,
+        max_size: LabelType,
     ) -> Self {
         Self {
             clustering,
