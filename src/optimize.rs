@@ -382,15 +382,14 @@ fn find_label_of_minimum<I: Iterator<Item = (LabelType, f64)>>(pairs: I) -> Labe
     l0
 }
 
-fn allocation_scan<T: CMLossComputer, U: Rng>(
+fn allocation_scan<T: CMLossComputer>(
     sweetening_scan: bool,
+    singletons_initialization: bool,
     state: &mut WorkingClustering,
     cms: &mut Array3<CountType>,
     permutation: &Vec<usize>,
     loss_computer: &mut T,
-    probability_of_empty_cluster: f64,
     draws: &Clusterings,
-    rng: &mut U,
 ) -> bool {
     let mut state_changed = false;
     for item_index in permutation {
@@ -400,31 +399,29 @@ fn allocation_scan<T: CMLossComputer, U: Rng>(
             true => Some(state.get(item_index)),
             false => None,
         };
-        let to_label = if !sweetening_scan
-            && label_of_empty_cluster.is_some()
-            && rng.gen_range(0.0, 1.0) < probability_of_empty_cluster
-        {
-            label_of_empty_cluster.unwrap()
-        } else {
-            let iter = state
-                .occupied_clusters()
-                .iter()
-                .chain(label_of_empty_cluster.iter())
-                .map(|to_label| {
-                    (
-                        *to_label,
-                        loss_computer.change_in_loss(
-                            item_index,
+        let to_label =
+            if !sweetening_scan && singletons_initialization && label_of_empty_cluster.is_some() {
+                label_of_empty_cluster.unwrap()
+            } else {
+                let iter = state
+                    .occupied_clusters()
+                    .iter()
+                    .chain(label_of_empty_cluster.iter())
+                    .map(|to_label| {
+                        (
                             *to_label,
-                            from_label_option,
-                            &state,
-                            &cms,
-                            &draws,
-                        ),
-                    )
-                });
-            find_label_of_minimum(iter)
-        };
+                            loss_computer.change_in_loss(
+                                item_index,
+                                *to_label,
+                                from_label_option,
+                                &state,
+                                &cms,
+                                &draws,
+                            ),
+                        )
+                    });
+                find_label_of_minimum(iter)
+            };
         if !sweetening_scan || to_label != from_label_option.unwrap() {
             loss_computer.decision_callback(
                 item_index,
@@ -478,26 +475,34 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy();
     for run_counter in 1..=p.n_runs {
-        let mut state = WorkingClustering::empty(n_items, max_size);
-        let mut cms = Array3::<CountType>::zeros((
-            state.max_clusters() as usize + 1,
-            draws.max_clusters() as usize,
-            draws.n_clusterings(),
-        ));
         let mut loss_computer = loss_computer_factory();
-        // Sequential allocation
-        permutation.shuffle(rng);
-        allocation_scan(
-            false,
-            &mut state,
-            &mut cms,
-            &permutation,
-            &mut loss_computer,
-            p.probability_of_empty_cluster,
-            draws,
-            rng,
-        );
-        // Sweetening
+        let (mut state, mut cms) = if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
+            let mut state = WorkingClustering::empty(n_items, max_size);
+            let mut cms = Array3::<CountType>::zeros((
+                max_size as usize + 1,
+                draws.max_clusters() as usize,
+                draws.n_clusterings(),
+            ));
+            // Sequential allocation
+            permutation.shuffle(rng);
+            let singletons_initializations =
+                rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
+            allocation_scan(
+                false,
+                singletons_initializations,
+                &mut state,
+                &mut cms,
+                &permutation,
+                &mut loss_computer,
+                draws,
+            );
+            (state, cms)
+        } else {
+            let state = WorkingClustering::random(n_items, max_size, rng);
+            let cms = draws.make_confusion_matrices(&state);
+            (state, cms)
+        };
+        // Sweetening scans
         let mut scan_counter = 0;
         let mut state_changed = true;
         while state_changed && scan_counter < p.max_scans {
@@ -505,13 +510,12 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             permutation.shuffle(rng);
             state_changed = allocation_scan(
                 true,
+                false,
                 &mut state,
                 &mut cms,
                 &permutation,
                 &mut loss_computer,
-                1.0,
                 draws,
-                rng,
             );
         }
         let expected_loss = loss_computer.compute_loss(&state, &cms);
@@ -969,17 +973,24 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     let mut run_counter = 0;
     while run_counter < p.n_runs {
         let mut computer = computer_factory();
-        let mut partition = Partition::new(p.n_items);
-        permutation.shuffle(rng);
-        // Initial allocation
-        for i in 0..p.n_items {
-            let label_of_empty_cluster =
-                label_of_empty_cluster(&mut partition, &mut computer, max_label);
-            let ii = unsafe { *permutation.get_unchecked(i) };
-            let take_empty = label_of_empty_cluster.is_some()
-                && rng.gen_range(0.0, 1.0) < p.probability_of_empty_cluster;
-            micro_optimized_allocation(&mut partition, &mut computer, ii, take_empty);
-        }
+        let mut partition = if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
+            let mut partition = Partition::new(p.n_items);
+            permutation.shuffle(rng);
+            let singletons_initialize = rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
+            // Sequential allocation
+            for i in 0..p.n_items {
+                let label_of_empty_cluster =
+                    label_of_empty_cluster(&mut partition, &mut computer, max_label);
+                let ii = unsafe { *permutation.get_unchecked(i) };
+                let take_empty = label_of_empty_cluster.is_some() && singletons_initialize;
+                micro_optimized_allocation(&mut partition, &mut computer, ii, take_empty);
+            }
+            partition
+        } else {
+            panic!("Not yet implemented.");
+            let partition = Partition::new(p.n_items);
+            partition
+        };
         // Sweetening scans
         let mut n_scans = 0;
         let mut change = true;
@@ -1037,7 +1048,8 @@ pub struct SALSOParameters {
     max_size: LabelType,
     max_scans: u32,
     n_runs: u32,
-    probability_of_empty_cluster: f64,
+    prob_sequential_allocation: f64,
+    prob_singletons_initialization: f64,
 }
 
 pub struct SALSOResults {
@@ -1266,7 +1278,8 @@ mod tests_optimize {
             max_size: 2,
             max_scans: 10,
             n_runs: 100,
-            probability_of_empty_cluster: 0.5,
+            prob_sequential_allocation: 0.25,
+            prob_singletons_initialization: 0.5,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
@@ -1292,7 +1305,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     max_size: i32,
     max_scans: i32,
     n_runs: i32,
-    probability_of_empty_cluster: f64,
+    prob_sequential_allocation: f64,
+    prob_singletons_initialization: f64,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
@@ -1340,7 +1354,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         max_size,
         max_scans,
         n_runs,
-        probability_of_empty_cluster,
+        prob_sequential_allocation,
+        prob_singletons_initialization,
     };
     let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);

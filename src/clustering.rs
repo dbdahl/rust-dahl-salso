@@ -1,6 +1,7 @@
 use crate::*;
 
 use ndarray::Array3;
+use rand::Rng;
 use std::collections::HashMap;
 
 pub struct Clusterings {
@@ -123,6 +124,17 @@ impl WorkingClustering {
             occupied_clusters,
             potentially_empty_label: 0,
         }
+    }
+
+    pub fn random<T: Rng>(n_items: usize, max_clusters: LabelType, rng: &mut T) -> Self {
+        WorkingClustering::from_vector(
+            {
+                let mut v = Vec::with_capacity(n_items);
+                v.resize_with(n_items, || rng.gen_range(0, max_clusters));
+                v
+            },
+            max_clusters,
+        )
     }
 
     pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
