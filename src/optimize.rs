@@ -500,6 +500,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
         } else {
             let state = WorkingClustering::random(n_items, max_size, rng);
             let cms = draws.make_confusion_matrices(&state);
+            loss_computer.initialize(&state, &cms);
             (state, cms)
         };
         // Sweetening scans
@@ -943,13 +944,17 @@ fn micro_optimized_allocation<U: GeneralLossComputer>(
     partition: &mut Partition,
     computer: &mut U,
     i: usize,
-    take_empty: bool,
+    label_to_take: Option<LabelType>,
 ) -> LabelType {
     let max_label = partition.n_subsets() as LabelType - 1;
     let iter = (0..=max_label).map(|subset_index| {
         let value = computer.speculative_add(partition, i, subset_index as LabelType);
-        if take_empty && (&partition.subsets()[subset_index as usize]).is_empty() {
-            (subset_index, f64::NEG_INFINITY)
+        if label_to_take.is_some() {
+            if subset_index == label_to_take.unwrap() {
+                (subset_index, f64::NEG_INFINITY)
+            } else {
+                (subset_index, f64::INFINITY)
+            }
         } else {
             (subset_index, value)
         }
@@ -979,16 +984,27 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             let singletons_initialize = rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
             // Sequential allocation
             for i in 0..p.n_items {
-                let label_of_empty_cluster =
-                    label_of_empty_cluster(&mut partition, &mut computer, max_label);
                 let ii = unsafe { *permutation.get_unchecked(i) };
-                let take_empty = label_of_empty_cluster.is_some() && singletons_initialize;
-                micro_optimized_allocation(&mut partition, &mut computer, ii, take_empty);
+                let empty_label = label_of_empty_cluster(&mut partition, &mut computer, max_label);
+                if singletons_initialize {
+                    micro_optimized_allocation(&mut partition, &mut computer, ii, empty_label);
+                } else {
+                    micro_optimized_allocation(&mut partition, &mut computer, ii, None);
+                }
             }
             partition
         } else {
-            panic!("Not yet implemented.");
-            let partition = Partition::new(p.n_items);
+            let mut partition = Partition::new(p.n_items);
+            let destiny = {
+                let mut v = Vec::with_capacity(p.n_items);
+                v.resize_with(p.n_items, || rng.gen_range(0, p.max_size));
+                Partition::from(&v) // Already canonicalized
+            };
+            for i in 0..p.n_items {
+                let label_to_take = Some(destiny.label_of(i).unwrap() as LabelType);
+                label_of_empty_cluster(&mut partition, &mut computer, max_label);
+                micro_optimized_allocation(&mut partition, &mut computer, i, label_to_take);
+            }
             partition
         };
         // Sweetening scans
@@ -1003,7 +1019,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let previous_subset_index = computer.remove(&mut partition, ii);
                 let subset_index =
-                    micro_optimized_allocation(&mut partition, &mut computer, ii, false);
+                    micro_optimized_allocation(&mut partition, &mut computer, ii, None);
                 if subset_index != previous_subset_index {
                     change = true;
                 };
