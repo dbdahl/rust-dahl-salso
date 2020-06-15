@@ -1115,15 +1115,15 @@ pub fn minimize_by_salso<T: Rng>(
     let stop_time = SystemTime::now() + Duration::new(seconds, nanoseconds);
     let result = if !parallel {
         match loss_function {
-            LossFunction::Binder => minimize_once_by_salso(
-                Box::new(|| BinderGLossComputer::new(pdi.psm())),
+            LossFunction::BinderDraws => minimize_once_by_salso_v2(
+                Box::new(|| BinderCMLossComputer::new()),
+                pdi.draws(),
                 p,
                 &stop_time,
                 rng,
             ),
-            LossFunction::Binder2 => minimize_once_by_salso_v2(
-                Box::new(|| BinderCMLossComputer::new()),
-                pdi.draws(),
+            LossFunction::BinderPSM => minimize_once_by_salso(
+                Box::new(|| BinderGLossComputer::new(pdi.psm())),
                 p,
                 &stop_time,
                 rng,
@@ -1169,15 +1169,15 @@ pub fn minimize_by_salso<T: Rng>(
                 let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                 s.spawn(move |_| {
                     let result = match loss_function {
-                        LossFunction::Binder => minimize_once_by_salso(
-                            Box::new(|| BinderGLossComputer::new(pdi.psm())),
+                        LossFunction::BinderDraws => minimize_once_by_salso_v2(
+                            Box::new(|| BinderCMLossComputer::new()),
+                            pdi.draws(),
                             p,
                             &stop_time,
                             &mut child_rng,
                         ),
-                        LossFunction::Binder2 => minimize_once_by_salso_v2(
-                            Box::new(|| BinderCMLossComputer::new()),
-                            pdi.draws(),
+                        LossFunction::BinderPSM => minimize_once_by_salso(
+                            Box::new(|| BinderGLossComputer::new(pdi.psm())),
                             p,
                             &stop_time,
                             &mut child_rng,
@@ -1228,7 +1228,7 @@ pub fn minimize_by_salso<T: Rng>(
     };
     let result = SALSOResults {
         expected_loss: match loss_function {
-            LossFunction::Binder => {
+            LossFunction::BinderPSM => {
                 BinderGLossComputer::expected_loss_from_kernel(pdi.psm(), result.expected_loss)
             }
             LossFunction::VIlb => {
@@ -1354,13 +1354,13 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let mut rng = mk_rng_isaac(seed_ptr);
     let (loss_function, pdi) = match LossFunction::from_code(loss) {
         Some(loss_function) => match loss_function {
-            LossFunction::Binder | LossFunction::OneMinusARIapprox | LossFunction::VIlb => (
-                loss_function,
-                PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
-            ),
-            LossFunction::Binder2 | LossFunction::OneMinusARI | LossFunction::VI => (
+            LossFunction::BinderDraws | LossFunction::OneMinusARI | LossFunction::VI => (
                 loss_function,
                 PartitionDistributionInformation::Draws(&draws),
+            ),
+            LossFunction::BinderPSM | LossFunction::OneMinusARIapprox | LossFunction::VIlb => (
+                loss_function,
+                PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
             ),
         },
         None => panic!("Unsupported loss method: code = {}", loss),
@@ -1395,8 +1395,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let f = match LossFunction::from_code(loss) {
         Some(loss_function) => match loss_function {
-            LossFunction::Binder => binder_single_kernel,
-            LossFunction::Binder2 => panic!("No implementation for binder2."),
+            LossFunction::BinderDraws => panic!("No implementation for binder2."),
+            LossFunction::BinderPSM => binder_single_kernel,
             LossFunction::OneMinusARI => panic!("No implementation for omARI."),
             LossFunction::OneMinusARIapprox => omariapprox_single,
             LossFunction::VI => panic!("No implementation for VI."),

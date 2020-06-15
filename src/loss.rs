@@ -252,13 +252,13 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let results = slice::from_raw_parts_mut(results_ptr, np);
     let loss_function = LossFunction::from_code(loss);
     match loss_function {
-        Some(LossFunction::Binder) => binder_multiple(&partitions, &psm, results),
-        Some(LossFunction::Binder2) => compute_loss_multiple(
+        Some(LossFunction::BinderDraws) => compute_loss_multiple(
             Box::new(|| BinderCMLossComputer::new()),
             &partitions,
             &draws,
             results,
         ),
+        Some(LossFunction::BinderPSM) => binder_multiple(&partitions, &psm, results),
         Some(LossFunction::OneMinusARI) => compute_loss_multiple(
             Box::new(|| OMARICMLossComputer::new(nd)),
             &partitions,

@@ -39,8 +39,8 @@ impl<'a> PartitionDistributionInformation<'a> {
 
 #[derive(Debug, Copy, Clone)]
 pub enum LossFunction {
-    Binder,
-    Binder2,
+    BinderDraws,
+    BinderPSM,
     OneMinusARI,
     OneMinusARIapprox,
     VI,
@@ -50,8 +50,8 @@ pub enum LossFunction {
 impl LossFunction {
     fn from_code(x: i32) -> Option<LossFunction> {
         match x {
-            0 => Some(LossFunction::Binder),
-            1 => Some(LossFunction::Binder2),
+            0 => Some(LossFunction::BinderDraws),
+            1 => Some(LossFunction::BinderPSM),
             2 => Some(LossFunction::OneMinusARI),
             3 => Some(LossFunction::OneMinusARIapprox),
             4 => Some(LossFunction::VI),
