@@ -466,43 +466,50 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
 ) -> SALSOResults {
     let n_items = draws.n_items();
     let max_size = match p.max_size {
-        0 => {
-            let (mean, sd) = draws.mean_and_sd_of_n_clusters();
-            (mean + 2.0 * sd).ceil() as LabelType
-        }
+        0 => draws.max_clusters(),
         _ => p.max_size,
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
-    let mut best = SALSOResults::dummy();
+    let mut best = SALSOResults::dummy(max_size);
     for run_counter in 1..=p.n_runs {
         let mut loss_computer = loss_computer_factory();
-        let (mut state, mut cms) = if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
-            let mut state = WorkingClustering::empty(n_items, max_size);
-            let mut cms = Array3::<CountType>::zeros((
-                max_size as usize + 1,
-                draws.max_clusters() as usize,
-                draws.n_clusterings(),
-            ));
-            // Sequential allocation
-            permutation.shuffle(rng);
-            let singletons_initializations =
-                rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
-            allocation_scan(
-                false,
-                singletons_initializations,
-                &mut state,
-                &mut cms,
-                &permutation,
-                &mut loss_computer,
-                draws,
-            );
-            (state, cms)
-        } else {
-            let state = WorkingClustering::random(n_items, max_size, rng);
-            let cms = draws.make_confusion_matrices(&state);
-            loss_computer.initialize(&state, &cms);
-            (state, cms)
-        };
+        let (mut state, mut cms, initialization_method) =
+            if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
+                let mut state = WorkingClustering::empty(n_items, max_size);
+                let mut cms = Array3::<CountType>::zeros((
+                    max_size as usize + 1,
+                    draws.max_clusters() as usize,
+                    draws.n_clusterings(),
+                ));
+                // Sequential allocation
+                permutation.shuffle(rng);
+                let singletons_initialization =
+                    rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
+                allocation_scan(
+                    false,
+                    singletons_initialization,
+                    &mut state,
+                    &mut cms,
+                    &permutation,
+                    &mut loss_computer,
+                    draws,
+                );
+                let initialization_method = if singletons_initialization {
+                    InitializationMethod::SequentialFromSingletons
+                } else {
+                    InitializationMethod::SequentialFromEmpty
+                };
+                (state, cms, initialization_method)
+            } else {
+                let state = WorkingClustering::random(n_items, max_size, rng);
+                let cms = draws.make_confusion_matrices(&state);
+                loss_computer.initialize(&state, &cms);
+                (
+                    state,
+                    cms,
+                    InitializationMethod::SampleOne2MaxWithReplacement,
+                )
+            };
         // Sweetening scans
         let mut scan_counter = 0;
         let mut state_changed = true;
@@ -519,6 +526,43 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 draws,
             );
         }
+        /*
+        // Try final merges
+        let expected_loss = loss_computer.compute_loss(&state, &cms);
+        let mut changed = true;
+        'outer: while changed {
+            changed = false;
+            for label1 in state.occupied_clusters() {
+                for label2 in state.occupied_clusters() {
+                    if *label1 == *label2 {
+                        continue;
+                    }
+                    let mut state2 = state.clone();
+                    let mut cms2 = cms.clone();
+                    let to_index = *label1 as usize + 1;
+                    let from_index = *label2 as usize + 1;
+                    for item_index in 0..(state2.n_items() as usize) {
+                        if state2.get(item_index) == *label2 {
+                            state2.reassign(item_index, *label1);
+                            for draw_index in 0..draws.n_clusterings() {
+                                let other_index = draws.label(draw_index, item_index) as usize;
+                                cms2[(from_index, other_index, draw_index)] -= 1;
+                                cms2[(to_index, other_index, draw_index)] += 1;
+                            }
+                        }
+                    }
+                    let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
+                    if expected_loss2 < expected_loss {
+                        state = state2;
+                        cms = cms2;
+                        changed = true;
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+        */
+        // Tidy up
         let expected_loss = loss_computer.compute_loss(&state, &cms);
         if expected_loss < best.expected_loss {
             let clustering = state.standardize().iter().map(|x| *x as usize).collect();
@@ -526,17 +570,21 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 clustering,
                 expected_loss,
                 n_scans: scan_counter,
-                max_size,
+                initialization_method,
                 ..best
             }
         }
         if SystemTime::now() > *stop_time {
-            best.n_runs = run_counter;
-            return best;
+            return SALSOResults {
+                n_runs: run_counter,
+                ..best
+            };
         }
     }
-    best.n_runs = p.n_runs;
-    best
+    SALSOResults {
+        n_runs: p.n_runs,
+        ..best
+    }
 }
 
 // ******************************************
@@ -971,28 +1019,34 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     rng: &mut T,
 ) -> SALSOResults {
     let max_label = p.max_size.max(1) - 1;
-    let mut global_minimum = std::f64::INFINITY;
-    let mut global_best = Partition::new(p.n_items);
-    let mut global_n_scans = 0;
+    let mut best = SALSOResults::dummy(p.max_size);
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut run_counter = 0;
     while run_counter < p.n_runs {
         let mut computer = computer_factory();
-        let mut partition = if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
+        let (mut partition, initialization_method) = if rng.gen_range(0.0, 1.0)
+            < p.prob_sequential_allocation
+        {
             let mut partition = Partition::new(p.n_items);
             permutation.shuffle(rng);
-            let singletons_initialize = rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
+            let singletons_initialization =
+                rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
             // Sequential allocation
             for i in 0..p.n_items {
                 let ii = unsafe { *permutation.get_unchecked(i) };
                 let empty_label = label_of_empty_cluster(&mut partition, &mut computer, max_label);
-                if singletons_initialize {
+                if singletons_initialization {
                     micro_optimized_allocation(&mut partition, &mut computer, ii, empty_label);
                 } else {
                     micro_optimized_allocation(&mut partition, &mut computer, ii, None);
                 }
             }
-            partition
+            let initialization_method = if singletons_initialization {
+                InitializationMethod::SequentialFromSingletons
+            } else {
+                InitializationMethod::SequentialFromEmpty
+            };
+            (partition, initialization_method)
         } else {
             let mut partition = Partition::new(p.n_items);
             let destiny = {
@@ -1005,7 +1059,10 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
                 label_of_empty_cluster(&mut partition, &mut computer, max_label);
                 micro_optimized_allocation(&mut partition, &mut computer, i, label_to_take);
             }
-            partition
+            (
+                partition,
+                InitializationMethod::SampleOne2MaxWithReplacement,
+            )
         };
         // Sweetening scans
         let mut n_scans = 0;
@@ -1025,35 +1082,29 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
                 };
             }
         }
-        let value = computer.expected_loss_kernel();
-        if value < global_minimum {
-            global_minimum = value;
-            global_best = partition;
-            global_n_scans = n_scans;
+        let expected_loss = computer.expected_loss_kernel();
+        if expected_loss < best.expected_loss {
+            partition.canonicalize();
+            best = SALSOResults {
+                clustering: partition.labels_via_copying(),
+                expected_loss,
+                n_scans,
+                initialization_method,
+                ..best
+            };
         }
         run_counter += 1;
         if SystemTime::now() > *stop_time {
-            global_best.canonicalize();
-            let labels = global_best.labels_via_copying();
-            return SALSOResults::new(
-                labels,
-                global_minimum,
-                global_n_scans,
-                run_counter,
-                p.max_size,
-            );
+            return SALSOResults {
+                n_runs: run_counter,
+                ..best
+            };
         }
     }
-    // Canonicalize the labels
-    global_best.canonicalize();
-    let labels = global_best.labels_via_copying();
-    SALSOResults::new(
-        labels,
-        global_minimum,
-        global_n_scans,
-        run_counter,
-        p.max_size,
-    )
+    SALSOResults {
+        n_runs: p.n_runs,
+        ..best
+    }
 }
 
 // Common implementation for SALSO.
@@ -1072,6 +1123,7 @@ pub struct SALSOResults {
     clustering: Vec<usize>,
     expected_loss: f64,
     n_scans: u32,
+    initialization_method: InitializationMethod,
     n_runs: u32,
     max_size: LabelType,
 }
@@ -1081,6 +1133,7 @@ impl SALSOResults {
         clustering: Vec<usize>,
         expected_loss: f64,
         n_scans: u32,
+        initialization_method: InitializationMethod,
         n_runs: u32,
         max_size: LabelType,
     ) -> Self {
@@ -1088,13 +1141,21 @@ impl SALSOResults {
             clustering,
             expected_loss,
             n_scans,
+            initialization_method,
             n_runs,
             max_size,
         }
     }
 
-    pub fn dummy() -> Self {
-        SALSOResults::new(vec![0usize; 0], std::f64::INFINITY, 0, 0, 0)
+    pub fn dummy(max_size: LabelType) -> Self {
+        SALSOResults::new(
+            vec![0usize; 0],
+            std::f64::INFINITY,
+            0,
+            InitializationMethod::SequentialFromEmpty,
+            0,
+            max_size,
+        )
     }
 }
 
@@ -1215,7 +1276,7 @@ pub fn minimize_by_salso<T: Rng>(
         })
         .unwrap();
         std::mem::drop(tx); // Because of the cloning in the loop.
-        let mut best = SALSOResults::dummy();
+        let mut best = SALSOResults::dummy(p.max_size);
         let mut run_counter = 0;
         for candidate in rx {
             run_counter += candidate.n_runs;
@@ -1330,6 +1391,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_scans_ptr: *mut i32,
     results_n_runs_ptr: *mut i32,
     results_max_size_ptr: *mut i32,
+    results_initialization_method_ptr: *mut i32,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let n_items = usize::try_from(n_items).unwrap();
@@ -1382,6 +1444,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     *results_scans_ptr = i32::try_from(results.n_scans).unwrap();
     *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
     *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
+    *results_initialization_method_ptr =
+        i32::try_from(results.initialization_method.to_code()).unwrap();
 }
 
 #[no_mangle]

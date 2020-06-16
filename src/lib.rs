@@ -60,3 +60,20 @@ impl LossFunction {
         }
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub enum InitializationMethod {
+    SequentialFromEmpty,
+    SequentialFromSingletons,
+    SampleOne2MaxWithReplacement,
+}
+
+impl InitializationMethod {
+    fn to_code(&self) -> u32 {
+        match self {
+            Self::SequentialFromEmpty => 0,
+            Self::SequentialFromSingletons => 1,
+            Self::SampleOne2MaxWithReplacement => 2,
+        }
+    }
+}

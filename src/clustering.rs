@@ -137,6 +137,10 @@ impl WorkingClustering {
         )
     }
 
+    pub fn one_cluster(n_items: usize, max_clusters: LabelType) -> Self {
+        WorkingClustering::from_vector(vec![0; n_items], max_clusters)
+    }
+
     pub fn from_slice(labels: &[LabelType], max_clusters: LabelType) -> Self {
         Self::from_vector(labels.to_vec(), max_clusters)
     }
