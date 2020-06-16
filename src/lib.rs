@@ -61,7 +61,7 @@ impl LossFunction {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum InitializationMethod {
     SequentialFromEmpty,
     SequentialFromSingletons,

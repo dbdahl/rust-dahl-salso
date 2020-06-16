@@ -528,9 +528,9 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
         }
         /*
         // Try final merges
-        let expected_loss = loss_computer.compute_loss(&state, &cms);
         let mut changed = true;
         'outer: while changed {
+            let expected_loss = loss_computer.compute_loss(&state, &cms);
             changed = false;
             for label1 in state.occupied_clusters() {
                 for label2 in state.occupied_clusters() {
