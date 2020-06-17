@@ -535,10 +535,19 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         if *label1 == *label2 {
                             continue;
                         }
+                        // Copying is cheaper than changing (and undoing) the original state.
                         let mut state2 = state.clone();
                         let mut cms2 = cms.clone();
+                        let s1 = state2.size_of(*label1);
+                        let s2 = state2.size_of(*label2);
+                        let (label1, label2, s2) = if s1 < s2 {
+                            (label2, label1, s1)
+                        } else {
+                            (label1, label2, s2)
+                        };
                         let to_index = *label1 as usize + 1;
                         let from_index = *label2 as usize + 1;
+                        let mut hit_counter = 0;
                         for item_index in 0..(state2.n_items() as usize) {
                             if state2.get(item_index) == *label2 {
                                 state2.reassign(item_index, *label1);
@@ -546,6 +555,10 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                                     let other_index = draws.label(draw_index, item_index) as usize;
                                     cms2[(from_index, other_index, draw_index)] -= 1;
                                     cms2[(to_index, other_index, draw_index)] += 1;
+                                }
+                                hit_counter += 1;
+                                if hit_counter == s2 {
+                                    break;
                                 }
                             }
                         }
