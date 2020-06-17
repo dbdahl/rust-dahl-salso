@@ -286,4 +286,30 @@ impl WorkingClustering {
             *self.sizes.get_unchecked_mut(new_label as usize) += 1;
         }
     }
+
+    pub fn remove(&mut self, item_index: usize) {
+        let old_label = self.labels[item_index];
+        self.sizes[old_label as usize] -= 1;
+        if self.sizes[old_label as usize] == 0 {
+            self.occupied_clusters.swap_remove(
+                self.occupied_clusters
+                    .iter()
+                    .position(|x| *x == old_label)
+                    .unwrap(),
+            );
+        }
+    }
+
+    pub unsafe fn remove_unchecked(&mut self, item_index: usize) {
+        let old_label = *self.labels.get_unchecked(item_index);
+        *self.sizes.get_unchecked_mut(old_label as usize) -= 1;
+        if *self.sizes.get_unchecked(old_label as usize) == 0 {
+            self.occupied_clusters.swap_remove(
+                self.occupied_clusters
+                    .iter()
+                    .position(|x| *x == old_label)
+                    .unwrap(),
+            );
+        }
+    }
 }

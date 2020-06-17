@@ -457,6 +457,46 @@ fn allocation_scan<T: CMLossComputer>(
     state_changed
 }
 
+fn constrained_allocation_scan<T: CMLossComputer>(
+    state: &mut WorkingClustering,
+    cms: &mut Array3<CountType>,
+    label1: LabelType,
+    label2: LabelType,
+    permutation: &Vec<usize>,
+    loss_computer: &mut T,
+    draws: &Clusterings,
+) -> bool {
+    let mut first_is_empty = true;
+    let mut second_is_empty = true;
+    for item_index in permutation {
+        let item_index = *item_index;
+        let to_label = {
+            let possibilities = [label1, label2];
+            let iter = possibilities.iter().map(|to_label| {
+                (
+                    *to_label,
+                    loss_computer.change_in_loss(item_index, *to_label, None, &state, &cms, &draws),
+                )
+            });
+            find_label_of_minimum(iter)
+        };
+        if to_label == label1 {
+            first_is_empty = false
+        } else {
+            second_is_empty = false
+        }
+        loss_computer.decision_callback(item_index, to_label, None, &state, &cms, &draws);
+        state.assign(item_index, to_label);
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..draws.n_clusterings() {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            cms[(0, other_index, draw_index)] += 1;
+            cms[(to_index, other_index, draw_index)] += 1;
+        }
+    }
+    !first_is_empty && !second_is_empty
+}
+
 pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
@@ -510,7 +550,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     InitializationMethod::SampleOne2MaxWithReplacement,
                 )
             };
-        let (mut scan_counter, mut merge_counter, split_counter) = (0, 0, 0);
+        let (mut scan_counter, mut merge_counter, mut split_counter) = (0, 0, 0);
         let mut expected_loss_option = None;
         'bigloop: loop {
             // Sweetening scans
@@ -580,6 +620,51 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     }
                 }
                 // Try splitting
+                let label_of_empty_cluster = state.label_of_empty_cluster();
+                if label_of_empty_cluster.is_some() {
+                    for label in state.occupied_clusters() {
+                        let mut state2 = state.clone();
+                        let mut cms2 = cms.clone();
+                        let s2 = state2.size_of(*label) as usize;
+                        let from_index = *label as usize + 1;
+                        let mut active_items = Vec::with_capacity(s2);
+                        for item_index in 0..(state2.n_items() as usize) {
+                            if state2.get(item_index) == *label {
+                                state2.remove(item_index);
+                                for draw_index in 0..draws.n_clusterings() {
+                                    let other_index = draws.label(draw_index, item_index) as usize;
+                                    cms2[(0, other_index, draw_index)] -= 1;
+                                    cms2[(from_index, other_index, draw_index)] -= 1;
+                                }
+                                active_items.push(item_index);
+                                if active_items.len() == s2 {
+                                    break;
+                                }
+                            }
+                        }
+                        active_items.shuffle(rng);
+                        let both_nonempty = constrained_allocation_scan(
+                            &mut state2,
+                            &mut cms2,
+                            *label,
+                            label_of_empty_cluster.unwrap(),
+                            &active_items,
+                            &mut loss_computer,
+                            draws,
+                        );
+                        if both_nonempty {
+                            let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
+                            if expected_loss2 < expected_loss_option.unwrap() {
+                                println!("{} {}", *label, label_of_empty_cluster.unwrap());
+                                split_counter += 1;
+                                state = state2;
+                                cms = cms2;
+                                expected_loss_option = Some(expected_loss2);
+                                continue 'bigloop;
+                            }
+                        }
+                    }
+                }
             }
             break;
         }
