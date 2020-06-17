@@ -511,6 +511,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 )
             };
         let (mut scan_counter, mut merge_counter, split_counter) = (0, 0, 0);
+        let mut expected_loss_option = None;
         'bigloop: loop {
             // Sweetening scans
             let mut state_changed = true;
@@ -526,10 +527,15 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     &mut loss_computer,
                     draws,
                 );
+                if state_changed {
+                    expected_loss_option = None;
+                }
             }
-            // Try merging
-            let expected_loss = loss_computer.compute_loss(&state, &cms);
+            if expected_loss_option.is_none() {
+                expected_loss_option = Some(loss_computer.compute_loss(&state, &cms));
+            }
             if p.try_merge_split {
+                // Try merging
                 for label1 in state.occupied_clusters() {
                     for label2 in state.occupied_clusters() {
                         if *label1 == *label2 {
@@ -540,6 +546,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         let mut cms2 = cms.clone();
                         let s1 = state2.size_of(*label1);
                         let s2 = state2.size_of(*label2);
+                        // Drain the cluster with the fewer items.
                         let (label1, label2, s2) = if s1 < s2 {
                             (label2, label1, s1)
                         } else {
@@ -563,24 +570,25 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                             }
                         }
                         let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
-                        if expected_loss2 < expected_loss {
+                        if expected_loss2 < expected_loss_option.unwrap() {
                             merge_counter += 1;
                             state = state2;
                             cms = cms2;
+                            expected_loss_option = Some(expected_loss2);
                             continue 'bigloop;
                         }
                     }
                 }
+                // Try splitting
             }
             break;
         }
         // Tidy up
-        let expected_loss = loss_computer.compute_loss(&state, &cms);
-        if expected_loss < best.expected_loss {
+        if expected_loss_option.unwrap() < best.expected_loss {
             let clustering = state.standardize().iter().map(|x| *x as usize).collect();
             best = SALSOResults {
                 clustering,
-                expected_loss,
+                expected_loss: expected_loss_option.unwrap(),
                 n_scans: scan_counter,
                 n_merges: merge_counter,
                 n_splits: split_counter,
