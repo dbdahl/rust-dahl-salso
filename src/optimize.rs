@@ -510,58 +510,57 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     InitializationMethod::SampleOne2MaxWithReplacement,
                 )
             };
-        // Sweetening scans
-        let mut scan_counter = 0;
-        let mut state_changed = true;
-        while state_changed && scan_counter < p.max_scans {
-            scan_counter += 1;
-            permutation.shuffle(rng);
-            state_changed = allocation_scan(
-                true,
-                false,
-                &mut state,
-                &mut cms,
-                &permutation,
-                &mut loss_computer,
-                draws,
-            );
-        }
-        /*
-        // Try final merges
-        let mut changed = true;
-        'outer: while changed {
+        let (mut scan_counter, mut merge_counter, split_counter) = (0, 0, 0);
+        'bigloop: loop {
+            // Sweetening scans
+            let mut state_changed = true;
+            while state_changed && scan_counter < p.max_scans {
+                scan_counter += 1;
+                permutation.shuffle(rng);
+                state_changed = allocation_scan(
+                    true,
+                    false,
+                    &mut state,
+                    &mut cms,
+                    &permutation,
+                    &mut loss_computer,
+                    draws,
+                );
+            }
+            // Try merging
             let expected_loss = loss_computer.compute_loss(&state, &cms);
-            changed = false;
-            for label1 in state.occupied_clusters() {
-                for label2 in state.occupied_clusters() {
-                    if *label1 == *label2 {
-                        continue;
-                    }
-                    let mut state2 = state.clone();
-                    let mut cms2 = cms.clone();
-                    let to_index = *label1 as usize + 1;
-                    let from_index = *label2 as usize + 1;
-                    for item_index in 0..(state2.n_items() as usize) {
-                        if state2.get(item_index) == *label2 {
-                            state2.reassign(item_index, *label1);
-                            for draw_index in 0..draws.n_clusterings() {
-                                let other_index = draws.label(draw_index, item_index) as usize;
-                                cms2[(from_index, other_index, draw_index)] -= 1;
-                                cms2[(to_index, other_index, draw_index)] += 1;
+            if p.try_merge_split {
+                for label1 in state.occupied_clusters() {
+                    for label2 in state.occupied_clusters() {
+                        if *label1 == *label2 {
+                            continue;
+                        }
+                        let mut state2 = state.clone();
+                        let mut cms2 = cms.clone();
+                        let to_index = *label1 as usize + 1;
+                        let from_index = *label2 as usize + 1;
+                        for item_index in 0..(state2.n_items() as usize) {
+                            if state2.get(item_index) == *label2 {
+                                state2.reassign(item_index, *label1);
+                                for draw_index in 0..draws.n_clusterings() {
+                                    let other_index = draws.label(draw_index, item_index) as usize;
+                                    cms2[(from_index, other_index, draw_index)] -= 1;
+                                    cms2[(to_index, other_index, draw_index)] += 1;
+                                }
                             }
                         }
-                    }
-                    let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
-                    if expected_loss2 < expected_loss {
-                        state = state2;
-                        cms = cms2;
-                        changed = true;
-                        continue 'outer;
+                        let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
+                        if expected_loss2 < expected_loss {
+                            merge_counter += 1;
+                            state = state2;
+                            cms = cms2;
+                            continue 'bigloop;
+                        }
                     }
                 }
             }
+            break;
         }
-        */
         // Tidy up
         let expected_loss = loss_computer.compute_loss(&state, &cms);
         if expected_loss < best.expected_loss {
@@ -570,6 +569,8 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 clustering,
                 expected_loss,
                 n_scans: scan_counter,
+                n_merges: merge_counter,
+                n_splits: split_counter,
                 initialization_method,
                 ..best
             }
@@ -1117,12 +1118,15 @@ pub struct SALSOParameters {
     n_runs: u32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
+    try_merge_split: bool,
 }
 
 pub struct SALSOResults {
     clustering: Vec<usize>,
     expected_loss: f64,
     n_scans: u32,
+    n_merges: u32,
+    n_splits: u32,
     initialization_method: InitializationMethod,
     n_runs: u32,
     max_size: LabelType,
@@ -1133,6 +1137,8 @@ impl SALSOResults {
         clustering: Vec<usize>,
         expected_loss: f64,
         n_scans: u32,
+        n_merges: u32,
+        n_splits: u32,
         initialization_method: InitializationMethod,
         n_runs: u32,
         max_size: LabelType,
@@ -1141,6 +1147,8 @@ impl SALSOResults {
             clustering,
             expected_loss,
             n_scans,
+            n_merges,
+            n_splits,
             initialization_method,
             n_runs,
             max_size,
@@ -1151,6 +1159,8 @@ impl SALSOResults {
         SALSOResults::new(
             vec![0usize; 0],
             std::f64::INFINITY,
+            0,
+            0,
             0,
             InitializationMethod::SequentialFromEmpty,
             0,
@@ -1357,6 +1367,7 @@ mod tests_optimize {
             n_runs: 100,
             prob_sequential_allocation: 0.25,
             prob_singletons_initialization: 0.5,
+            try_merge_split: true,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
@@ -1384,11 +1395,14 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     n_runs: i32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
+    try_merge_split: i32,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
     results_expected_loss_ptr: *mut f64,
-    results_scans_ptr: *mut i32,
+    results_n_scans_ptr: *mut i32,
+    results_n_merges_ptr: *mut i32,
+    results_n_splits_ptr: *mut i32,
     results_n_runs_ptr: *mut i32,
     results_max_size_ptr: *mut i32,
     results_initialization_method_ptr: *mut i32,
@@ -1404,6 +1418,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let max_size = LabelType::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let n_runs = u32::try_from(n_runs).unwrap();
+    let try_merge_split = try_merge_split != 0;
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
@@ -1434,6 +1449,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_runs,
         prob_sequential_allocation,
         prob_singletons_initialization,
+        try_merge_split,
     };
     let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
@@ -1441,7 +1457,9 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
     *results_expected_loss_ptr = results.expected_loss;
-    *results_scans_ptr = i32::try_from(results.n_scans).unwrap();
+    *results_n_scans_ptr = i32::try_from(results.n_scans).unwrap();
+    *results_n_merges_ptr = i32::try_from(results.n_merges).unwrap();
+    *results_n_splits_ptr = i32::try_from(results.n_splits).unwrap();
     *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
     *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
     *results_initialization_method_ptr =
