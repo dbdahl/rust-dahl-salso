@@ -574,18 +574,26 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             if expected_loss_option.is_none() {
                 expected_loss_option = Some(loss_computer.compute_loss(&state, &cms));
             }
-            if p.try_merge_split {
+            if p.merge_split_strategy == 1
+                || state.occupied_clusters().len() <= p.merge_split_strategy as usize
+            {
                 // Try merging
                 for label1 in state.occupied_clusters() {
+                    let s1 = state.size_of(*label1);
+                    if s1 < 2 {
+                        continue;
+                    }
                     for label2 in state.occupied_clusters() {
                         if *label1 == *label2 {
+                            continue;
+                        }
+                        let s2 = state.size_of(*label2);
+                        if s2 < 2 {
                             continue;
                         }
                         // Copying is cheaper than changing (and undoing) the original state.
                         let mut state2 = state.clone();
                         let mut cms2 = cms.clone();
-                        let s1 = state2.size_of(*label1);
-                        let s2 = state2.size_of(*label2);
                         // Drain the cluster with the fewer items.
                         let (label1, label2, s2) = if s1 < s2 {
                             (label2, label1, s1)
@@ -623,9 +631,12 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 let label_of_empty_cluster = state.label_of_empty_cluster();
                 if label_of_empty_cluster.is_some() {
                     for label in state.occupied_clusters() {
+                        let s2 = state.size_of(*label) as usize;
+                        if s2 < 4 {
+                            continue;
+                        }
                         let mut state2 = state.clone();
                         let mut cms2 = cms.clone();
-                        let s2 = state2.size_of(*label) as usize;
                         let from_index = *label as usize + 1;
                         let mut active_items = Vec::with_capacity(s2);
                         for item_index in 0..(state2.n_items() as usize) {
@@ -655,7 +666,6 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         if both_nonempty {
                             let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
                             if expected_loss2 < expected_loss_option.unwrap() {
-                                println!("{} {}", *label, label_of_empty_cluster.unwrap());
                                 split_counter += 1;
                                 state = state2;
                                 cms = cms2;
@@ -1224,7 +1234,7 @@ pub struct SALSOParameters {
     n_runs: u32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    try_merge_split: bool,
+    merge_split_strategy: LabelType,
 }
 
 pub struct SALSOResults {
@@ -1473,7 +1483,7 @@ mod tests_optimize {
             n_runs: 100,
             prob_sequential_allocation: 0.25,
             prob_singletons_initialization: 0.5,
-            try_merge_split: true,
+            merge_split_strategy: 1,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
@@ -1501,7 +1511,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     n_runs: i32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    try_merge_split: i32,
+    merge_split_strategy: i32,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
@@ -1524,7 +1534,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let max_size = LabelType::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let n_runs = u32::try_from(n_runs).unwrap();
-    let try_merge_split = try_merge_split != 0;
+    let merge_split_strategy = LabelType::try_from(merge_split_strategy).unwrap();
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
@@ -1555,7 +1565,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_runs,
         prob_sequential_allocation,
         prob_singletons_initialization,
-        try_merge_split,
+        merge_split_strategy,
     };
     let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
