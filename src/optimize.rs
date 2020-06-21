@@ -507,7 +507,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     let n_items = draws.n_items();
     let max_size = match p.max_size {
         0 => draws.max_clusters(),
-        _ => p.max_size,
+        _ => draws.max_clusters().min(p.max_size),
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy(max_size);
@@ -574,9 +574,9 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             if expected_loss_option.is_none() {
                 expected_loss_option = Some(loss_computer.compute_loss(&state, &cms));
             }
-            if p.merge_split_strategy == 1
-                || state.occupied_clusters().len() <= p.merge_split_strategy as usize
-            {
+            if p.merge_split {
+                // Need a new loss computer (for omARI).
+                // Or maybe I go with the "modify-in-place" implementation.
                 // Try merging
                 for label1 in state.occupied_clusters() {
                     let s1 = state.size_of(*label1);
@@ -605,6 +605,14 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         let mut hit_counter = 0;
                         for item_index in 0..(state2.n_items() as usize) {
                             if state2.get(item_index) == *label2 {
+                                loss_computer.decision_callback(
+                                    item_index,
+                                    *label1,
+                                    Some(*label2),
+                                    &state2,
+                                    &cms2,
+                                    &draws,
+                                );
                                 state2.reassign(item_index, *label1);
                                 for draw_index in 0..draws.n_clusterings() {
                                     let other_index = draws.label(draw_index, item_index) as usize;
@@ -1135,8 +1143,12 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     stop_time: &SystemTime,
     rng: &mut T,
 ) -> SALSOResults {
-    let max_label = p.max_size.max(1) - 1;
-    let mut best = SALSOResults::dummy(p.max_size);
+    let max_label = if p.max_size == 0 {
+        LabelType::MAX - 1
+    } else {
+        p.max_size.max(1) - 1
+    };
+    let mut best = SALSOResults::dummy(max_label + 1);
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut run_counter = 0;
     while run_counter < p.n_runs {
@@ -1168,7 +1180,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             let mut partition = Partition::new(p.n_items);
             let destiny = {
                 let mut v = Vec::with_capacity(p.n_items);
-                v.resize_with(p.n_items, || rng.gen_range(0, p.max_size));
+                v.resize_with(p.n_items, || rng.gen_range(0, max_label + 1));
                 Partition::from(&v) // Already canonicalized
             };
             for i in 0..p.n_items {
@@ -1234,7 +1246,7 @@ pub struct SALSOParameters {
     n_runs: u32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    merge_split_strategy: LabelType,
+    merge_split: bool,
 }
 
 pub struct SALSOResults {
@@ -1483,7 +1495,7 @@ mod tests_optimize {
             n_runs: 100,
             prob_sequential_allocation: 0.25,
             prob_singletons_initialization: 0.5,
-            merge_split_strategy: 1,
+            merge_split: true,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
@@ -1511,7 +1523,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     n_runs: i32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    merge_split_strategy: i32,
+    merge_split: i32,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
@@ -1534,7 +1546,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let max_size = LabelType::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let n_runs = u32::try_from(n_runs).unwrap();
-    let merge_split_strategy = LabelType::try_from(merge_split_strategy).unwrap();
+    let merge_split = merge_split != 0;
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
@@ -1565,7 +1577,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_runs,
         prob_sequential_allocation,
         prob_singletons_initialization,
-        merge_split_strategy,
+        merge_split,
     };
     let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
