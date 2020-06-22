@@ -42,7 +42,7 @@ pub trait CMLossComputer {
     fn decision_callback(
         &mut self,
         item_index: usize,
-        to_label: LabelType,
+        to_label_option: Option<LabelType>,
         from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
@@ -243,14 +243,19 @@ impl CMLossComputer for OMARICMLossComputer {
     fn decision_callback(
         &mut self,
         item_index: usize,
-        to_label: LabelType,
+        to_label_option: Option<LabelType>,
         from_label_option: Option<LabelType>,
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) {
-        self.sum2 += 2.0 * state.size_of(to_label) as f64;
-        let to_index = to_label as usize + 1;
+        let to_index = if to_label_option.is_some() {
+            self.sum2 += 2.0 * state.size_of(to_label_option.unwrap()) as f64;
+            to_label_option.unwrap() as usize + 1
+        } else {
+            self.n -= 1;
+            0
+        };
         let from_index = if from_label_option.is_some() {
             self.sum2 -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
             from_label_option.unwrap() as usize + 1
@@ -258,18 +263,19 @@ impl CMLossComputer for OMARICMLossComputer {
             self.n += 1;
             0
         };
-        let n_draws = cms.len_of(Axis(2));
+        let n_draws = draws.n_clusterings();
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            let n = cms[(0, other_index, draw_index)];
-            if n > 0 {
-                if from_label_option.is_some() {
-                    self.sums[(draw_index, 1)] -=
-                        2.0 * (cms[(from_index, other_index, draw_index)] - 1) as f64;
-                } else {
-                    self.sums[(draw_index, 0)] += 2.0 * n as f64;
-                }
+            if from_label_option.is_some() {
+                self.sums[(draw_index, 1)] -=
+                    2.0 * (cms[(from_index, other_index, draw_index)] - 1) as f64;
+            } else {
+                self.sums[(draw_index, 0)] += 2.0 * cms[(0, other_index, draw_index)] as f64;
+            }
+            if to_label_option.is_some() {
                 self.sums[(draw_index, 1)] += 2.0 * cms[(to_index, other_index, draw_index)] as f64;
+            } else {
+                self.sums[(draw_index, 0)] -= 2.0 * (cms[(0, other_index, draw_index)] - 1) as f64;
             }
         }
     }
@@ -369,6 +375,7 @@ fn allocation_scan<T: CMLossComputer>(
     draws: &Clusterings,
 ) -> bool {
     let mut state_changed = false;
+    let mut chosen_label_option = None;
     for item_index in permutation {
         let item_index = *item_index;
         let label_of_empty_cluster = state.label_of_empty_cluster();
@@ -401,7 +408,13 @@ fn allocation_scan<T: CMLossComputer>(
             };
         if !sweetening_scan {
             state.assign(item_index, to_label, loss_computer, cms, draws);
-            state_changed = true;
+            if chosen_label_option.is_none() {
+                chosen_label_option = Some(to_label);
+                state_changed = state.size_of(to_label) != 1;
+            }
+            if to_label != chosen_label_option.unwrap() {
+                state_changed = true;
+            }
         } else if to_label != from_label_option.unwrap() {
             state.reassign(item_index, to_label, loss_computer, cms, draws);
             state_changed = true;
@@ -459,6 +472,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     let mut best = SALSOResults::dummy(max_size);
     for run_counter in 1..=p.n_runs {
         let mut loss_computer = loss_computer_factory();
+        let singletons_initialization = rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
         let (mut state, mut cms, initialization_method) =
             if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
                 let mut state = WorkingClustering::empty(n_items, max_size);
@@ -469,8 +483,6 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 ));
                 // Sequential allocation
                 permutation.shuffle(rng);
-                let singletons_initialization =
-                    rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
                 allocation_scan(
                     false,
                     singletons_initialization,
@@ -521,8 +533,55 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 expected_loss_option = Some(loss_computer.compute_loss(&state, &cms));
             }
             if p.merge_split {
-                panic!("Not working right now.");
+                let labels = state.occupied_clusters().clone();
+                for label in labels {
+                    let s = state.size_of(label) as usize;
+                    let mut active_items = Vec::with_capacity(s);
+                    for item_index in 0..(state.n_items() as usize) {
+                        if state.get(item_index) == label {
+                            state.remove(item_index, &mut loss_computer, &mut cms, draws);
+                            active_items.push(item_index)
+                        }
+                        if active_items.len() == s {
+                            break;
+                        }
+                    }
+                    active_items.shuffle(rng);
+                    let state_changed = allocation_scan(
+                        false,
+                        singletons_initialization,
+                        &mut state,
+                        &mut cms,
+                        &active_items,
+                        &mut loss_computer,
+                        draws,
+                    );
+                    if state_changed {
+                        let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
+                        if expected_loss_of_candidate < expected_loss_option.unwrap() {
+                            expected_loss_option = Some(expected_loss_of_candidate);
+                            merge_counter += 1;
+                            println!("change for the better");
+                            continue 'bigloop;
+                        } else {
+                            for item_index in active_items {
+                                state.reassign(
+                                    item_index,
+                                    label,
+                                    &mut loss_computer,
+                                    &mut cms,
+                                    draws,
+                                )
+                            }
+                            println!("change for the worst");
+                            split_counter += 1;
+                        }
+                    } else {
+                        println!("no change");
+                    }
+                }
             }
+            /*
             if p.merge_split {
                 // Need a new loss computer (for omARI).
                 // Or maybe I go with the "modify-in-place" implementation.
@@ -618,6 +677,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     }
                 }
             }
+            */
             break;
         }
         // Tidy up

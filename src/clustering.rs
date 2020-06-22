@@ -240,7 +240,7 @@ impl WorkingClustering {
         cms: &mut Array3<CountType>,
         draws: &Clusterings,
     ) {
-        loss_computer.decision_callback(item_index, label, None, self, cms, draws);
+        loss_computer.decision_callback(item_index, Some(label), None, self, cms, draws);
         self.labels[item_index] = label;
         if self.sizes[label as usize] == 0 {
             self.occupied_clusters.push(label);
@@ -276,7 +276,7 @@ impl WorkingClustering {
         if new_label != old_label {
             loss_computer.decision_callback(
                 item_index,
-                new_label,
+                Some(new_label),
                 Some(old_label),
                 self,
                 cms,
@@ -328,8 +328,15 @@ impl WorkingClustering {
     }
     */
 
-    pub fn remove(&mut self, item_index: usize, cms: &mut Array3<CountType>, draws: &Clusterings) {
+    pub fn remove<T: CMLossComputer>(
+        &mut self,
+        item_index: usize,
+        loss_computer: &mut T,
+        cms: &mut Array3<CountType>,
+        draws: &Clusterings,
+    ) {
         let old_label = self.labels[item_index];
+        loss_computer.decision_callback(item_index, None, Some(old_label), self, cms, draws);
         self.sizes[old_label as usize] -= 1;
         if self.sizes[old_label as usize] == 0 {
             self.occupied_clusters.swap_remove(
