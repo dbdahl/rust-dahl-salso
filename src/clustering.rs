@@ -1,5 +1,6 @@
 use crate::*;
 
+use crate::optimize::CMLossComputer;
 use ndarray::Array3;
 use rand::Rng;
 use std::collections::HashMap;
@@ -231,14 +232,29 @@ impl WorkingClustering {
         *self.labels.get_unchecked(item_index)
     }
 
-    pub fn assign(&mut self, item_index: usize, label: LabelType) {
+    pub fn assign<T: CMLossComputer>(
+        &mut self,
+        item_index: usize,
+        label: LabelType,
+        loss_computer: &mut T,
+        cms: &mut Array3<CountType>,
+        draws: &Clusterings,
+    ) {
+        loss_computer.decision_callback(item_index, label, None, self, cms, draws);
         self.labels[item_index] = label;
         if self.sizes[label as usize] == 0 {
             self.occupied_clusters.push(label);
         }
         self.sizes[label as usize] += 1;
+        let to_index = label as usize + 1;
+        for draw_index in 0..draws.n_clusterings() {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            cms[(0, other_index, draw_index)] += 1;
+            cms[(to_index, other_index, draw_index)] += 1;
+        }
     }
 
+    /*
     pub unsafe fn assign_unchecked(&mut self, item_index: usize, label: LabelType) {
         *self.labels.get_unchecked_mut(item_index) = label;
         if *self.sizes.get_unchecked(label as usize) == 0 {
@@ -246,10 +262,26 @@ impl WorkingClustering {
         }
         *self.sizes.get_unchecked_mut(label as usize) += 1;
     }
+    */
 
-    pub fn reassign(&mut self, item_index: usize, new_label: LabelType) {
+    pub fn reassign<T: CMLossComputer>(
+        &mut self,
+        item_index: usize,
+        new_label: LabelType,
+        loss_computer: &mut T,
+        cms: &mut Array3<CountType>,
+        draws: &Clusterings,
+    ) {
         let old_label = self.labels[item_index];
         if new_label != old_label {
+            loss_computer.decision_callback(
+                item_index,
+                new_label,
+                Some(old_label),
+                self,
+                cms,
+                draws,
+            );
             self.labels[item_index] = new_label;
             self.sizes[old_label as usize] -= 1;
             if self.sizes[old_label as usize] == 0 {
@@ -264,9 +296,17 @@ impl WorkingClustering {
                 self.occupied_clusters.push(new_label);
             }
             self.sizes[new_label as usize] += 1;
+            let to_index = new_label as usize + 1;
+            let from_index = old_label as usize + 1;
+            for draw_index in 0..draws.n_clusterings() {
+                let other_index = draws.label(draw_index, item_index) as usize;
+                cms[(from_index, other_index, draw_index)] -= 1;
+                cms[(to_index, other_index, draw_index)] += 1;
+            }
         }
     }
 
+    /*
     pub unsafe fn reassign_unchecked(&mut self, item_index: usize, new_label: LabelType) {
         let old_label = *self.labels.get_unchecked(item_index);
         if new_label != old_label {
@@ -286,8 +326,9 @@ impl WorkingClustering {
             *self.sizes.get_unchecked_mut(new_label as usize) += 1;
         }
     }
+    */
 
-    pub fn remove(&mut self, item_index: usize) {
+    pub fn remove(&mut self, item_index: usize, cms: &mut Array3<CountType>, draws: &Clusterings) {
         let old_label = self.labels[item_index];
         self.sizes[old_label as usize] -= 1;
         if self.sizes[old_label as usize] == 0 {
@@ -298,8 +339,15 @@ impl WorkingClustering {
                     .unwrap(),
             );
         }
+        let from_index = old_label as usize + 1;
+        for draw_index in 0..draws.n_clusterings() {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            cms[(0, other_index, draw_index)] -= 1;
+            cms[(from_index, other_index, draw_index)] -= 1;
+        }
     }
 
+    /*
     pub unsafe fn remove_unchecked(&mut self, item_index: usize) {
         let old_label = *self.labels.get_unchecked(item_index);
         *self.sizes.get_unchecked_mut(old_label as usize) -= 1;
@@ -312,4 +360,5 @@ impl WorkingClustering {
             );
         }
     }
+    */
 }

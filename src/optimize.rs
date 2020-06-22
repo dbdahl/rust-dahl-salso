@@ -36,30 +36,7 @@ pub trait CMLossComputer {
         state: &WorkingClustering,
         cms: &Array3<CountType>,
         draws: &Clusterings,
-    ) -> f64 {
-        if from_label_option.is_some() && to_label == from_label_option.unwrap() {
-            self.compute_loss(&state, &cms)
-        } else {
-            let mut state = state.clone();
-            let mut cms = cms.clone();
-            let n_draws = cms.len_of(Axis(2));
-            state.reassign(item_index, to_label);
-            let to_index = to_label as usize + 1;
-            let from_index = if from_label_option.is_some() {
-                from_label_option.unwrap() as usize + 1
-            } else {
-                0
-            };
-            for draw_index in 0..n_draws {
-                let other_index = draws.label(draw_index, item_index) as usize;
-                cms[(to_index, other_index, draw_index)] += 1;
-                if from_label_option.is_some() {
-                    cms[(from_index, other_index, draw_index)] -= 1;
-                }
-            }
-            self.compute_loss(&state, &cms)
-        }
-    }
+    ) -> f64;
 
     #[allow(unused_variables)]
     fn decision_callback(
@@ -422,35 +399,11 @@ fn allocation_scan<T: CMLossComputer>(
                     });
                 find_label_of_minimum(iter)
             };
-        if !sweetening_scan || to_label != from_label_option.unwrap() {
-            loss_computer.decision_callback(
-                item_index,
-                to_label,
-                from_label_option,
-                &state,
-                &cms,
-                &draws,
-            );
-            if sweetening_scan {
-                state.reassign(item_index, to_label);
-            } else {
-                state.assign(item_index, to_label);
-            }
-            let from_index = if sweetening_scan {
-                from_label_option.unwrap() as usize + 1
-            } else {
-                0
-            };
-            let to_index = to_label as usize + 1;
-            for draw_index in 0..draws.n_clusterings() {
-                let other_index = draws.label(draw_index, item_index) as usize;
-                if sweetening_scan {
-                    cms[(from_index, other_index, draw_index)] -= 1;
-                } else {
-                    cms[(0, other_index, draw_index)] += 1;
-                }
-                cms[(to_index, other_index, draw_index)] += 1;
-            }
+        if !sweetening_scan {
+            state.assign(item_index, to_label, loss_computer, cms, draws);
+            state_changed = true;
+        } else if to_label != from_label_option.unwrap() {
+            state.reassign(item_index, to_label, loss_computer, cms, draws);
             state_changed = true;
         }
     }
@@ -485,14 +438,7 @@ fn constrained_allocation_scan<T: CMLossComputer>(
         } else {
             second_is_empty = false
         }
-        loss_computer.decision_callback(item_index, to_label, None, &state, &cms, &draws);
-        state.assign(item_index, to_label);
-        let to_index = to_label as usize + 1;
-        for draw_index in 0..draws.n_clusterings() {
-            let other_index = draws.label(draw_index, item_index) as usize;
-            cms[(0, other_index, draw_index)] += 1;
-            cms[(to_index, other_index, draw_index)] += 1;
-        }
+        state.assign(item_index, to_label, loss_computer, cms, draws);
     }
     !first_is_empty && !second_is_empty
 }
@@ -575,6 +521,9 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 expected_loss_option = Some(loss_computer.compute_loss(&state, &cms));
             }
             if p.merge_split {
+                panic!("Not working right now.");
+            }
+            if p.merge_split {
                 // Need a new loss computer (for omARI).
                 // Or maybe I go with the "modify-in-place" implementation.
                 // Try merging
@@ -600,25 +549,16 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         } else {
                             (label1, label2, s2)
                         };
-                        let to_index = *label1 as usize + 1;
-                        let from_index = *label2 as usize + 1;
                         let mut hit_counter = 0;
                         for item_index in 0..(state2.n_items() as usize) {
                             if state2.get(item_index) == *label2 {
-                                loss_computer.decision_callback(
+                                state2.reassign(
                                     item_index,
                                     *label1,
-                                    Some(*label2),
-                                    &state2,
-                                    &cms2,
-                                    &draws,
+                                    &mut loss_computer,
+                                    &mut cms2,
+                                    draws,
                                 );
-                                state2.reassign(item_index, *label1);
-                                for draw_index in 0..draws.n_clusterings() {
-                                    let other_index = draws.label(draw_index, item_index) as usize;
-                                    cms2[(from_index, other_index, draw_index)] -= 1;
-                                    cms2[(to_index, other_index, draw_index)] += 1;
-                                }
                                 hit_counter += 1;
                                 if hit_counter == s2 {
                                     break;
@@ -645,16 +585,10 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         }
                         let mut state2 = state.clone();
                         let mut cms2 = cms.clone();
-                        let from_index = *label as usize + 1;
                         let mut active_items = Vec::with_capacity(s2);
                         for item_index in 0..(state2.n_items() as usize) {
                             if state2.get(item_index) == *label {
-                                state2.remove(item_index);
-                                for draw_index in 0..draws.n_clusterings() {
-                                    let other_index = draws.label(draw_index, item_index) as usize;
-                                    cms2[(0, other_index, draw_index)] -= 1;
-                                    cms2[(from_index, other_index, draw_index)] -= 1;
-                                }
+                                state2.remove(item_index, &mut cms2, draws);
                                 active_items.push(item_index);
                                 if active_items.len() == s2 {
                                     break;
