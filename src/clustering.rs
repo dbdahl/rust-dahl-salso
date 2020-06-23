@@ -192,6 +192,10 @@ impl WorkingClustering {
         }
     }
 
+    pub fn clone_labels(&self) -> Vec<LabelType> {
+        self.labels.clone()
+    }
+
     pub fn standardize(&self) -> Vec<LabelType> {
         let n_items = self.labels.len();
         let mut labels = Vec::with_capacity(n_items);

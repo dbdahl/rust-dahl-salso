@@ -423,37 +423,25 @@ fn allocation_scan<T: CMLossComputer>(
     state_changed
 }
 
-fn constrained_allocation_scan<T: CMLossComputer>(
+fn sweetening_scans<T: CMLossComputer, U: Rng>(
     state: &mut WorkingClustering,
     cms: &mut Array3<CountType>,
-    label1: LabelType,
-    label2: LabelType,
-    permutation: &Vec<usize>,
+    permutation: &mut Vec<usize>,
     loss_computer: &mut T,
     draws: &Clusterings,
-) -> bool {
-    let mut first_is_empty = true;
-    let mut second_is_empty = true;
-    for item_index in permutation {
-        let item_index = *item_index;
-        let to_label = {
-            let possibilities = [label1, label2];
-            let iter = possibilities.iter().map(|to_label| {
-                (
-                    *to_label,
-                    loss_computer.change_in_loss(item_index, *to_label, None, &state, &cms, &draws),
-                )
-            });
-            find_label_of_minimum(iter)
-        };
-        if to_label == label1 {
-            first_is_empty = false
-        } else {
-            second_is_empty = false
-        }
-        state.assign(item_index, to_label, loss_computer, cms, draws);
+    p: &SALSOParameters,
+    rng: &mut U,
+) -> (bool, u32) {
+    let mut global_state_changed = false;
+    let mut state_changed = true;
+    let mut scan_counter = 0;
+    while state_changed && scan_counter < p.max_scans {
+        scan_counter += 1;
+        permutation.shuffle(rng);
+        state_changed = allocation_scan(true, false, state, cms, permutation, loss_computer, draws);
+        global_state_changed = global_state_changed || state_changed;
     }
-    !first_is_empty && !second_is_empty
+    (global_state_changed, scan_counter)
 }
 
 pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
@@ -508,32 +496,29 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     InitializationMethod::SampleOne2MaxWithReplacement,
                 )
             };
-        let (mut scan_counter, mut merge_counter, mut split_counter) = (0, 0, 0);
-        let mut expected_loss_option = None;
+        let (
+            mut scan_counter,
+            mut whole_cluster_update_successes,
+            mut whole_cluster_update_failures,
+        ) = (0, 0, 0);
+        let (_, counter) = sweetening_scans(
+            &mut state,
+            &mut cms,
+            &mut permutation,
+            &mut loss_computer,
+            draws,
+            &p,
+            rng,
+        );
+        scan_counter += counter;
+        let mut expected_loss = loss_computer.compute_loss(&state, &cms);
         'bigloop: loop {
-            // Sweetening scans
-            let mut state_changed = true;
-            while state_changed && scan_counter < p.max_scans {
-                scan_counter += 1;
-                permutation.shuffle(rng);
-                state_changed = allocation_scan(
-                    true,
-                    false,
-                    &mut state,
-                    &mut cms,
-                    &permutation,
-                    &mut loss_computer,
-                    draws,
-                );
-                if state_changed {
-                    expected_loss_option = None;
-                }
-            }
-            if expected_loss_option.is_none() {
-                expected_loss_option = Some(loss_computer.compute_loss(&state, &cms));
-            }
             if p.merge_split {
-                let labels = state.occupied_clusters().clone();
+                let labels = {
+                    let mut x = state.occupied_clusters().clone();
+                    x.shuffle(rng);
+                    x
+                };
                 for label in labels {
                     let s = state.size_of(label) as usize;
                     let mut active_items = Vec::with_capacity(s);
@@ -557,13 +542,32 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         draws,
                     );
                     if state_changed {
+                        let labels_before_sweetening_scan = state.clone_labels();
+                        let (_, counter) = sweetening_scans(
+                            &mut state,
+                            &mut cms,
+                            &mut permutation,
+                            &mut loss_computer,
+                            draws,
+                            &p,
+                            rng,
+                        );
+                        scan_counter += counter;
                         let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
-                        if expected_loss_of_candidate < expected_loss_option.unwrap() {
-                            expected_loss_option = Some(expected_loss_of_candidate);
-                            merge_counter += 1;
-                            println!("change for the better");
+                        if expected_loss_of_candidate < expected_loss {
+                            expected_loss = expected_loss_of_candidate;
+                            whole_cluster_update_successes += 1;
                             continue 'bigloop;
                         } else {
+                            for item_index in 0..labels_before_sweetening_scan.len() {
+                                state.reassign(
+                                    item_index,
+                                    labels_before_sweetening_scan[item_index],
+                                    &mut loss_computer,
+                                    &mut cms,
+                                    draws,
+                                )
+                            }
                             for item_index in active_items {
                                 state.reassign(
                                     item_index,
@@ -573,122 +577,24 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                                     draws,
                                 )
                             }
-                            println!("change for the worst");
-                            split_counter += 1;
+                            whole_cluster_update_failures += 1;
                         }
                     } else {
-                        println!("no change");
+                        // whole_cluster_update_static += 1;
                     }
                 }
             }
-            /*
-            if p.merge_split {
-                // Need a new loss computer (for omARI).
-                // Or maybe I go with the "modify-in-place" implementation.
-                // Try merging
-                for label1 in state.occupied_clusters() {
-                    let s1 = state.size_of(*label1);
-                    if s1 < 2 {
-                        continue;
-                    }
-                    for label2 in state.occupied_clusters() {
-                        if *label1 == *label2 {
-                            continue;
-                        }
-                        let s2 = state.size_of(*label2);
-                        if s2 < 2 {
-                            continue;
-                        }
-                        // Copying is cheaper than changing (and undoing) the original state.
-                        let mut state2 = state.clone();
-                        let mut cms2 = cms.clone();
-                        // Drain the cluster with the fewer items.
-                        let (label1, label2, s2) = if s1 < s2 {
-                            (label2, label1, s1)
-                        } else {
-                            (label1, label2, s2)
-                        };
-                        let mut hit_counter = 0;
-                        for item_index in 0..(state2.n_items() as usize) {
-                            if state2.get(item_index) == *label2 {
-                                state2.reassign(
-                                    item_index,
-                                    *label1,
-                                    &mut loss_computer,
-                                    &mut cms2,
-                                    draws,
-                                );
-                                hit_counter += 1;
-                                if hit_counter == s2 {
-                                    break;
-                                }
-                            }
-                        }
-                        let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
-                        if expected_loss2 < expected_loss_option.unwrap() {
-                            merge_counter += 1;
-                            state = state2;
-                            cms = cms2;
-                            expected_loss_option = Some(expected_loss2);
-                            continue 'bigloop;
-                        }
-                    }
-                }
-                // Try splitting
-                let label_of_empty_cluster = state.label_of_empty_cluster();
-                if label_of_empty_cluster.is_some() {
-                    for label in state.occupied_clusters() {
-                        let s2 = state.size_of(*label) as usize;
-                        if s2 < 4 {
-                            continue;
-                        }
-                        let mut state2 = state.clone();
-                        let mut cms2 = cms.clone();
-                        let mut active_items = Vec::with_capacity(s2);
-                        for item_index in 0..(state2.n_items() as usize) {
-                            if state2.get(item_index) == *label {
-                                state2.remove(item_index, &mut cms2, draws);
-                                active_items.push(item_index);
-                                if active_items.len() == s2 {
-                                    break;
-                                }
-                            }
-                        }
-                        active_items.shuffle(rng);
-                        let both_nonempty = constrained_allocation_scan(
-                            &mut state2,
-                            &mut cms2,
-                            *label,
-                            label_of_empty_cluster.unwrap(),
-                            &active_items,
-                            &mut loss_computer,
-                            draws,
-                        );
-                        if both_nonempty {
-                            let expected_loss2 = loss_computer.compute_loss(&state2, &cms2);
-                            if expected_loss2 < expected_loss_option.unwrap() {
-                                split_counter += 1;
-                                state = state2;
-                                cms = cms2;
-                                expected_loss_option = Some(expected_loss2);
-                                continue 'bigloop;
-                            }
-                        }
-                    }
-                }
-            }
-            */
             break;
         }
         // Tidy up
-        if expected_loss_option.unwrap() < best.expected_loss {
+        if expected_loss < best.expected_loss {
             let clustering = state.standardize().iter().map(|x| *x as usize).collect();
             best = SALSOResults {
                 clustering,
-                expected_loss: expected_loss_option.unwrap(),
+                expected_loss,
                 n_scans: scan_counter,
-                n_merges: merge_counter,
-                n_splits: split_counter,
+                n_merges: whole_cluster_update_successes,
+                n_splits: whole_cluster_update_failures,
                 initialization_method,
                 ..best
             }
