@@ -496,11 +496,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     InitializationMethod::SampleOne2MaxWithReplacement,
                 )
             };
-        let (
-            mut scan_counter,
-            mut whole_cluster_update_successes,
-            mut whole_cluster_update_failures,
-        ) = (0, 0, 0);
+        let (mut scan_counter, mut n_zealous_accepts, mut n_zealous_attempts) = (0, 0, 0);
         let (_, counter) = sweetening_scans(
             &mut state,
             &mut cms,
@@ -512,14 +508,15 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
         );
         scan_counter += counter;
         let mut expected_loss = loss_computer.compute_loss(&state, &cms);
-        'bigloop: loop {
-            if p.merge_split {
+        if p.zealous {
+            'bigloop: loop {
                 let labels = {
                     let mut x = state.occupied_clusters().clone();
                     x.shuffle(rng);
                     x
                 };
                 for label in labels {
+                    n_zealous_attempts += 1;
                     let s = state.size_of(label) as usize;
                     let mut active_items = Vec::with_capacity(s);
                     for item_index in 0..(state.n_items() as usize) {
@@ -543,7 +540,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     );
                     if state_changed {
                         let labels_before_sweetening_scan = state.clone_labels();
-                        let (_, counter) = sweetening_scans(
+                        let (state_changed, counter) = sweetening_scans(
                             &mut state,
                             &mut cms,
                             &mut permutation,
@@ -555,18 +552,22 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         scan_counter += counter;
                         let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
                         if expected_loss_of_candidate < expected_loss {
+                            // Keep changes
                             expected_loss = expected_loss_of_candidate;
-                            whole_cluster_update_successes += 1;
+                            n_zealous_accepts += 1;
                             continue 'bigloop;
                         } else {
-                            for item_index in 0..labels_before_sweetening_scan.len() {
-                                state.reassign(
-                                    item_index,
-                                    labels_before_sweetening_scan[item_index],
-                                    &mut loss_computer,
-                                    &mut cms,
-                                    draws,
-                                )
+                            // Undo changes
+                            if state_changed {
+                                for item_index in 0..labels_before_sweetening_scan.len() {
+                                    state.reassign(
+                                        item_index,
+                                        labels_before_sweetening_scan[item_index],
+                                        &mut loss_computer,
+                                        &mut cms,
+                                        draws,
+                                    )
+                                }
                             }
                             for item_index in active_items {
                                 state.reassign(
@@ -577,14 +578,11 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                                     draws,
                                 )
                             }
-                            whole_cluster_update_failures += 1;
                         }
-                    } else {
-                        // whole_cluster_update_static += 1;
                     }
                 }
+                break;
             }
-            break;
         }
         // Tidy up
         if expected_loss < best.expected_loss {
@@ -593,8 +591,8 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 clustering,
                 expected_loss,
                 n_scans: scan_counter,
-                n_merges: whole_cluster_update_successes,
-                n_splits: whole_cluster_update_failures,
+                n_zealous_accepts,
+                n_zealous_attempts,
                 initialization_method,
                 ..best
             }
@@ -1146,15 +1144,15 @@ pub struct SALSOParameters {
     n_runs: u32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    merge_split: bool,
+    zealous: bool,
 }
 
 pub struct SALSOResults {
     clustering: Vec<usize>,
     expected_loss: f64,
     n_scans: u32,
-    n_merges: u32,
-    n_splits: u32,
+    n_zealous_accepts: u32,
+    n_zealous_attempts: u32,
     initialization_method: InitializationMethod,
     n_runs: u32,
     max_size: LabelType,
@@ -1165,8 +1163,8 @@ impl SALSOResults {
         clustering: Vec<usize>,
         expected_loss: f64,
         n_scans: u32,
-        n_merges: u32,
-        n_splits: u32,
+        n_zealous_accepts: u32,
+        n_zealous_attempts: u32,
         initialization_method: InitializationMethod,
         n_runs: u32,
         max_size: LabelType,
@@ -1175,8 +1173,8 @@ impl SALSOResults {
             clustering,
             expected_loss,
             n_scans,
-            n_merges,
-            n_splits,
+            n_zealous_accepts,
+            n_zealous_attempts,
             initialization_method,
             n_runs,
             max_size,
@@ -1395,7 +1393,7 @@ mod tests_optimize {
             n_runs: 100,
             prob_sequential_allocation: 0.25,
             prob_singletons_initialization: 0.5,
-            merge_split: true,
+            zealous: true,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
@@ -1423,14 +1421,14 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     n_runs: i32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    merge_split: i32,
+    zealous: i32,
     seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
     results_expected_loss_ptr: *mut f64,
     results_n_scans_ptr: *mut i32,
-    results_n_merges_ptr: *mut i32,
-    results_n_splits_ptr: *mut i32,
+    results_n_zealous_accepts: *mut i32,
+    results_n_zealous_attempts: *mut i32,
     results_n_runs_ptr: *mut i32,
     results_max_size_ptr: *mut i32,
     results_initialization_method_ptr: *mut i32,
@@ -1446,7 +1444,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let max_size = LabelType::try_from(max_size).unwrap();
     let max_scans = u32::try_from(max_scans).unwrap();
     let n_runs = u32::try_from(n_runs).unwrap();
-    let merge_split = merge_split != 0;
+    let zealous = zealous != 0;
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
     } else {
@@ -1477,7 +1475,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_runs,
         prob_sequential_allocation,
         prob_singletons_initialization,
-        merge_split,
+        zealous,
     };
     let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
@@ -1486,8 +1484,8 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     }
     *results_expected_loss_ptr = results.expected_loss;
     *results_n_scans_ptr = i32::try_from(results.n_scans).unwrap();
-    *results_n_merges_ptr = i32::try_from(results.n_merges).unwrap();
-    *results_n_splits_ptr = i32::try_from(results.n_splits).unwrap();
+    *results_n_zealous_accepts = i32::try_from(results.n_zealous_accepts).unwrap();
+    *results_n_zealous_attempts = i32::try_from(results.n_zealous_attempts).unwrap();
     *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
     *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
     *results_initialization_method_ptr =
