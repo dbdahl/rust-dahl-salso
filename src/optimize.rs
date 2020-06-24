@@ -428,26 +428,26 @@ fn sweetening_scans<T: CMLossComputer, U: Rng>(
     cms: &mut Array3<CountType>,
     permutation: &mut Vec<usize>,
     loss_computer: &mut T,
+    scan_counter: &mut u32,
     draws: &Clusterings,
     p: &SALSOParameters,
     rng: &mut U,
-) -> (bool, u32) {
+) -> bool {
     let mut global_state_changed = false;
     let mut state_changed = true;
-    let mut scan_counter = 0;
-    while state_changed && scan_counter < p.max_scans {
-        scan_counter += 1;
+    while state_changed && *scan_counter < p.max_scans {
+        *scan_counter += 1;
         permutation.shuffle(rng);
         state_changed = allocation_scan(true, false, state, cms, permutation, loss_computer, draws);
         global_state_changed = global_state_changed || state_changed;
     }
-    (global_state_changed, scan_counter)
+    global_state_changed
 }
 
 pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
-    p: SALSOParameters,
+    p: &SALSOParameters,
     stop_time: &SystemTime,
     rng: &mut U,
 ) -> SALSOResults {
@@ -497,18 +497,18 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 )
             };
         let (mut scan_counter, mut n_zealous_accepts, mut n_zealous_attempts) = (0, 0, 0);
-        let (_, counter) = sweetening_scans(
+        sweetening_scans(
             &mut state,
             &mut cms,
             &mut permutation,
             &mut loss_computer,
+            &mut scan_counter,
             draws,
             &p,
             rng,
         );
-        scan_counter += counter;
         let mut expected_loss = loss_computer.compute_loss(&state, &cms);
-        if p.zealous {
+        if n_zealous_attempts < p.max_zealous_updates {
             'bigloop: loop {
                 let labels = {
                     let mut x = state.occupied_clusters().clone();
@@ -516,6 +516,9 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     x
                 };
                 for label in labels {
+                    if n_zealous_attempts >= p.max_zealous_updates {
+                        break 'bigloop;
+                    }
                     n_zealous_attempts += 1;
                     let s = state.size_of(label) as usize;
                     let mut active_items = Vec::with_capacity(s);
@@ -540,16 +543,16 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     );
                     if state_changed {
                         let labels_before_sweetening_scan = state.clone_labels();
-                        let (state_changed, counter) = sweetening_scans(
+                        let state_changed = sweetening_scans(
                             &mut state,
                             &mut cms,
                             &mut permutation,
                             &mut loss_computer,
+                            &mut scan_counter,
                             draws,
                             &p,
                             rng,
                         );
-                        scan_counter += counter;
                         let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
                         if expected_loss_of_candidate < expected_loss {
                             // Keep changes
@@ -1037,7 +1040,7 @@ fn micro_optimized_allocation<U: GeneralLossComputer>(
 
 pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     computer_factory: Box<dyn Fn() -> U + 'a>,
-    p: SALSOParameters,
+    p: &SALSOParameters,
     stop_time: &SystemTime,
     rng: &mut T,
 ) -> SALSOResults {
@@ -1141,10 +1144,10 @@ pub struct SALSOParameters {
     n_items: usize,
     max_size: LabelType,
     max_scans: u32,
+    max_zealous_updates: u32,
     n_runs: u32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    zealous: bool,
 }
 
 pub struct SALSOResults {
@@ -1198,7 +1201,7 @@ impl SALSOResults {
 pub fn minimize_by_salso<T: Rng>(
     pdi: PartitionDistributionInformation,
     loss_function: LossFunction,
-    p: SALSOParameters,
+    p: &SALSOParameters,
     seconds: u64,
     nanoseconds: u32,
     parallel: bool,
@@ -1255,6 +1258,7 @@ pub fn minimize_by_salso<T: Rng>(
     } else {
         let (tx, rx) = mpsc::channel();
         let n_cores = num_cpus::get() as u32;
+        let p = p.clone();
         let p = SALSOParameters {
             n_runs: (p.n_runs + n_cores - 1) / n_cores,
             ..p
@@ -1269,39 +1273,39 @@ pub fn minimize_by_salso<T: Rng>(
                         LossFunction::BinderDraws => minimize_once_by_salso_v2(
                             Box::new(|| BinderCMLossComputer::new()),
                             pdi.draws(),
-                            p,
+                            &p,
                             &stop_time,
                             &mut child_rng,
                         ),
                         LossFunction::BinderPSM => minimize_once_by_salso(
                             Box::new(|| BinderGLossComputer::new(pdi.psm())),
-                            p,
+                            &p,
                             &stop_time,
                             &mut child_rng,
                         ),
                         LossFunction::OneMinusARI => minimize_once_by_salso_v2(
                             Box::new(|| OMARICMLossComputer::new(pdi.draws().n_clusterings())),
                             pdi.draws(),
-                            p,
+                            &p,
                             &stop_time,
                             &mut child_rng,
                         ),
                         LossFunction::OneMinusARIapprox => minimize_once_by_salso(
                             Box::new(|| OMARIApproxGLossComputer::new(pdi.psm())),
-                            p,
+                            &p,
                             &stop_time,
                             &mut child_rng,
                         ),
                         LossFunction::VI => minimize_once_by_salso_v2(
                             Box::new(|| VICMLossComputer::new(cache_ref)),
                             pdi.draws(),
-                            p,
+                            &p,
                             &stop_time,
                             &mut child_rng,
                         ),
                         LossFunction::VIlb => minimize_once_by_salso(
                             Box::new(|| VILBGLossComputer::new(pdi.psm())),
-                            p,
+                            &p,
                             &stop_time,
                             &mut child_rng,
                         ),
@@ -1390,15 +1394,15 @@ mod tests_optimize {
             n_items,
             max_size: 2,
             max_scans: 10,
+            max_zealous_updates: 10,
             n_runs: 100,
             prob_sequential_allocation: 0.25,
             prob_singletons_initialization: 0.5,
-            zealous: true,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
             LossFunction::VIlb,
-            p,
+            &p,
             5,
             0,
             false,
@@ -1417,18 +1421,18 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     psm_ptr: *mut f64,
     loss: i32,
     max_size: i32,
-    max_scans: i32,
     n_runs: i32,
+    seconds: f64,
+    max_scans: i32,
+    max_zealous_updates: i32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    zealous: i32,
-    seconds: f64,
     parallel: i32,
     results_labels_ptr: *mut i32,
     results_expected_loss_ptr: *mut f64,
     results_n_scans_ptr: *mut i32,
-    results_n_zealous_accepts: *mut i32,
-    results_n_zealous_attempts: *mut i32,
+    results_n_zealous_accepts_ptr: *mut i32,
+    results_n_zealous_attempts_ptr: *mut i32,
     results_n_runs_ptr: *mut i32,
     results_max_size_ptr: *mut i32,
     results_initialization_method_ptr: *mut i32,
@@ -1441,20 +1445,6 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_items,
     );
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
-    let max_size = LabelType::try_from(max_size).unwrap();
-    let max_scans = u32::try_from(max_scans).unwrap();
-    let n_runs = u32::try_from(n_runs).unwrap();
-    let zealous = zealous != 0;
-    let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
-        (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
-    } else {
-        (
-            seconds.floor() as u64,
-            ((seconds - seconds.floor()) * 1_000_000_000.0).floor() as u32,
-        )
-    };
-    let parallel = parallel != 0;
-    let mut rng = mk_rng_isaac(seed_ptr);
     let (loss_function, pdi) = match LossFunction::from_code(loss) {
         Some(loss_function) => match loss_function {
             LossFunction::BinderDraws | LossFunction::OneMinusARI | LossFunction::VI => (
@@ -1468,24 +1458,38 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         },
         None => panic!("Unsupported loss method: code = {}", loss),
     };
+    let max_size = LabelType::try_from(max_size).unwrap();
+    let n_runs = u32::try_from(n_runs).unwrap();
+    let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
+        (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
+    } else {
+        (
+            seconds.floor() as u64,
+            ((seconds - seconds.floor()) * 1_000_000_000.0).floor() as u32,
+        )
+    };
+    let max_scans = u32::try_from(max_scans).unwrap();
+    let max_zealous_updates = u32::try_from(max_zealous_updates).unwrap();
+    let parallel = parallel != 0;
+    let mut rng = mk_rng_isaac(seed_ptr);
     let p = SALSOParameters {
         n_items,
         max_size,
         max_scans,
+        max_zealous_updates,
         n_runs,
         prob_sequential_allocation,
         prob_singletons_initialization,
-        zealous,
     };
-    let results = minimize_by_salso(pdi, loss_function, p, secs, nanos, parallel, &mut rng);
+    let results = minimize_by_salso(pdi, loss_function, &p, secs, nanos, parallel, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
     for (i, v) in results.clustering.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
     *results_expected_loss_ptr = results.expected_loss;
     *results_n_scans_ptr = i32::try_from(results.n_scans).unwrap();
-    *results_n_zealous_accepts = i32::try_from(results.n_zealous_accepts).unwrap();
-    *results_n_zealous_attempts = i32::try_from(results.n_zealous_attempts).unwrap();
+    *results_n_zealous_accepts_ptr = i32::try_from(results.n_zealous_accepts).unwrap();
+    *results_n_zealous_attempts_ptr = i32::try_from(results.n_zealous_attempts).unwrap();
     *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
     *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
     *results_initialization_method_ptr =
