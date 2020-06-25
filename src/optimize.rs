@@ -509,82 +509,76 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
         );
         let mut expected_loss = loss_computer.compute_loss(&state, &cms);
         if n_zealous_attempts < p.max_zealous_updates {
-            'bigloop: loop {
-                let labels = {
-                    let mut x = state.occupied_clusters().clone();
-                    x.shuffle(rng);
-                    x
-                };
-                for label in labels {
-                    if n_zealous_attempts >= p.max_zealous_updates {
-                        break 'bigloop;
+            let labels = {
+                let mut x = state.occupied_clusters().clone();
+                x.shuffle(rng);
+                x
+            };
+            for label in labels {
+                let s = state.size_of(label) as usize;
+                if s <= 1 {
+                    // Already covered by sweetening scans.
+                    continue;
+                }
+                if n_zealous_attempts >= p.max_zealous_updates {
+                    break;
+                }
+                n_zealous_attempts += 1;
+                let mut active_items = Vec::with_capacity(s);
+                for item_index in 0..(state.n_items() as usize) {
+                    if state.get(item_index) == label {
+                        state.remove(item_index, &mut loss_computer, &mut cms, draws);
+                        active_items.push(item_index)
                     }
-                    n_zealous_attempts += 1;
-                    let s = state.size_of(label) as usize;
-                    let mut active_items = Vec::with_capacity(s);
-                    for item_index in 0..(state.n_items() as usize) {
-                        if state.get(item_index) == label {
-                            state.remove(item_index, &mut loss_computer, &mut cms, draws);
-                            active_items.push(item_index)
-                        }
-                        if active_items.len() == s {
-                            break;
-                        }
+                    if active_items.len() == s {
+                        break;
                     }
-                    active_items.shuffle(rng);
-                    let state_changed = allocation_scan(
-                        false,
-                        singletons_initialization,
+                }
+                active_items.shuffle(rng);
+                let state_changed = allocation_scan(
+                    false,
+                    singletons_initialization,
+                    &mut state,
+                    &mut cms,
+                    &active_items,
+                    &mut loss_computer,
+                    draws,
+                );
+                if state_changed {
+                    let labels_for_undo = state.clone_labels();
+                    let state_changed = sweetening_scans(
                         &mut state,
                         &mut cms,
-                        &active_items,
+                        &mut permutation,
                         &mut loss_computer,
+                        &mut scan_counter,
                         draws,
+                        &p,
+                        rng,
                     );
-                    if state_changed {
-                        let labels_before_sweetening_scan = state.clone_labels();
-                        let state_changed = sweetening_scans(
-                            &mut state,
-                            &mut cms,
-                            &mut permutation,
-                            &mut loss_computer,
-                            &mut scan_counter,
-                            draws,
-                            &p,
-                            rng,
-                        );
-                        let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
-                        if expected_loss_of_candidate < expected_loss {
-                            // Keep changes
-                            expected_loss = expected_loss_of_candidate;
-                            n_zealous_accepts += 1;
-                            continue 'bigloop;
-                        } else {
-                            // Undo changes
-                            if state_changed {
-                                for item_index in 0..labels_before_sweetening_scan.len() {
-                                    state.reassign(
-                                        item_index,
-                                        labels_before_sweetening_scan[item_index],
-                                        &mut loss_computer,
-                                        &mut cms,
-                                        draws,
-                                    )
-                                }
-                            }
-                            for item_index in active_items {
+                    let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
+                    if expected_loss_of_candidate < expected_loss {
+                        // Keep changes
+                        expected_loss = expected_loss_of_candidate;
+                        n_zealous_accepts += 1;
+                    } else {
+                        // Undo changes
+                        if state_changed {
+                            for item_index in 0..labels_for_undo.len() {
                                 state.reassign(
                                     item_index,
-                                    label,
+                                    labels_for_undo[item_index],
                                     &mut loss_computer,
                                     &mut cms,
                                     draws,
                                 )
                             }
                         }
+                        for item_index in active_items {
+                            state.reassign(item_index, label, &mut loss_computer, &mut cms, draws)
+                        }
                     }
                 }
-                break;
             }
         }
         // Tidy up
