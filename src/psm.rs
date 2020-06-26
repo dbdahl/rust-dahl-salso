@@ -1,14 +1,15 @@
 extern crate num_cpus;
 
 use dahl_partition::*;
+use std::convert::TryFrom;
 use std::slice;
 
-pub fn psm(partitions: &PartitionsHolderBorrower, parallel: bool) -> SquareMatrix {
+pub fn psm(partitions: &PartitionsHolderBorrower, n_cores: u32) -> SquareMatrix {
     let mut psm = SquareMatrix::zeros(partitions.n_items());
     engine(
         partitions.n_partitions(),
         partitions.n_items(),
-        parallel,
+        n_cores,
         partitions,
         &mut psm.view(),
     );
@@ -27,9 +28,9 @@ mod tests {
         partitions.push_partition(&Partition::from("ABBB".as_bytes()));
         partitions.push_partition(&Partition::from("AAAB".as_bytes()));
         let partitions_view = partitions.view();
-        let psm1 = psm(&partitions_view, true);
+        let psm1 = psm(&partitions_view, 2);
         assert_eq!(format!("{:?}", psm1.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
-        let psm2 = psm(&partitions_view, false);
+        let psm2 = psm(&partitions_view, 1);
         assert_eq!(format!("{:?}", psm2.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
     }
 }
@@ -37,14 +38,18 @@ mod tests {
 fn engine(
     n_partitions: usize,
     n_items: usize,
-    parallel: bool,
+    n_cores: u32,
     partitions: &PartitionsHolderBorrower,
     psm: &mut SquareMatrixBorrower,
 ) -> () {
-    if !parallel {
+    if n_cores == 1 {
         engine2(n_partitions, n_items, None, partitions, psm);
     } else {
-        let n_cores = num_cpus::get();
+        let n_cores = if n_cores == 0 {
+            num_cpus::get()
+        } else {
+            n_cores as usize
+        };
         let n_pairs = n_items * (n_items - 1) / 2;
         let step_size = n_pairs / n_cores + 1;
         let mut s = 0usize;
@@ -112,7 +117,7 @@ fn engine2(
 pub unsafe extern "C" fn dahl_salso__psm(
     n_partitions: i32,
     n_items: i32,
-    parallel: i32,
+    n_cores: i32,
     partitions_ptr: *mut i32,
     psm_ptr: *mut f64,
 ) -> () {
@@ -120,5 +125,6 @@ pub unsafe extern "C" fn dahl_salso__psm(
     let ni = n_items as usize;
     let partitions = PartitionsHolderBorrower::from_ptr(partitions_ptr, np, ni, true);
     let mut psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
-    engine(np, ni, parallel != 0, &partitions, &mut psm);
+    let n_cores = u32::try_from(n_cores).unwrap();
+    engine(np, ni, n_cores, &partitions, &mut psm);
 }

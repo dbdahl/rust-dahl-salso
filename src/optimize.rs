@@ -1198,7 +1198,7 @@ pub fn minimize_by_salso<T: Rng>(
     p: &SALSOParameters,
     seconds: u64,
     nanoseconds: u32,
-    parallel: bool,
+    n_cores: u32,
     mut rng: &mut T,
 ) -> SALSOResults {
     let cache = Log2Cache::new(if let LossFunction::VI = loss_function {
@@ -1207,7 +1207,7 @@ pub fn minimize_by_salso<T: Rng>(
         0
     });
     let stop_time = SystemTime::now() + Duration::new(seconds, nanoseconds);
-    let result = if !parallel {
+    let result = if n_cores == 1 {
         match loss_function {
             LossFunction::BinderDraws => minimize_once_by_salso_v2(
                 Box::new(|| BinderCMLossComputer::new()),
@@ -1251,7 +1251,11 @@ pub fn minimize_by_salso<T: Rng>(
         }
     } else {
         let (tx, rx) = mpsc::channel();
-        let n_cores = num_cpus::get() as u32;
+        let n_cores = if n_cores == 0 {
+            num_cpus::get() as u32
+        } else {
+            n_cores
+        };
         let p = p.clone();
         let p = SALSOParameters {
             n_runs: (p.n_runs + n_cores - 1) / n_cores,
@@ -1399,7 +1403,7 @@ mod tests_optimize {
             &p,
             5,
             0,
-            false,
+            1,
             &mut thread_rng(),
         );
     }
@@ -1421,7 +1425,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     max_zealous_updates: i32,
     prob_sequential_allocation: f64,
     prob_singletons_initialization: f64,
-    parallel: i32,
+    n_cores: i32,
     results_labels_ptr: *mut i32,
     results_expected_loss_ptr: *mut f64,
     results_n_scans_ptr: *mut i32,
@@ -1464,7 +1468,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     };
     let max_scans = u32::try_from(max_scans).unwrap();
     let max_zealous_updates = u32::try_from(max_zealous_updates).unwrap();
-    let parallel = parallel != 0;
+    let n_cores = u32::try_from(n_cores).unwrap();
     let mut rng = mk_rng_isaac(seed_ptr);
     let p = SALSOParameters {
         n_items,
@@ -1475,7 +1479,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         prob_sequential_allocation,
         prob_singletons_initialization,
     };
-    let results = minimize_by_salso(pdi, loss_function, &p, secs, nanos, parallel, &mut rng);
+    let results = minimize_by_salso(pdi, loss_function, &p, secs, nanos, n_cores, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
     for (i, v) in results.clustering.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();

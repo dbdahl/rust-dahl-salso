@@ -292,7 +292,7 @@ mod tests_loss {
             samples.push_partition(&Partition::from(&labels[..]));
         }
         let n_partitions = samples.n_partitions();
-        let mut psm = crate::psm::psm(&samples.view(), true);
+        let mut psm = crate::psm::psm(&samples.view(), 2);
         let samples_view = &samples.view();
         let psm_view = &psm.view();
         let mut results = vec![0.0; n_partitions];
