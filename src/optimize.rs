@@ -496,7 +496,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     InitializationMethod::SampleOne2MaxWithReplacement,
                 )
             };
-        let (mut scan_counter, mut n_zealous_accepts, mut n_zealous_attempts) = (0, 0, 0);
+        let mut scan_counter = 0;
         sweetening_scans(
             &mut state,
             &mut cms,
@@ -508,6 +508,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             rng,
         );
         let mut expected_loss = loss_computer.compute_loss(&state, &cms);
+        let (mut n_zealous_accepts, mut n_zealous_attempts) = (0, 0);
         if n_zealous_attempts < p.max_zealous_updates {
             let labels = {
                 let mut x = state.occupied_clusters().clone();
@@ -520,10 +521,10 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     // Already covered by sweetening scans.
                     continue;
                 }
-                if n_zealous_attempts >= p.max_zealous_updates {
+                n_zealous_attempts += 1;
+                if n_zealous_attempts > p.max_zealous_updates {
                     break;
                 }
-                n_zealous_attempts += 1;
                 let mut active_items = Vec::with_capacity(s);
                 for item_index in 0..(state.n_items() as usize) {
                     if state.get(item_index) == label {
