@@ -452,9 +452,10 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     rng: &mut U,
 ) -> SALSOResults {
     let n_items = draws.n_items();
-    let max_size = match p.max_size {
-        0 => draws.max_clusters(),
-        _ => draws.max_clusters().min(p.max_size),
+    let max_size = match (p.max_size, p.strict_max_size) {
+        (0, _) => draws.max_clusters(),
+        (_, false) => p.max_size.min(draws.max_clusters()),
+        (_, true) => p.max_size,
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy(max_size);
@@ -1138,6 +1139,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
 pub struct SALSOParameters {
     n_items: usize,
     max_size: LabelType,
+    strict_max_size: bool,
     max_scans: u32,
     max_zealous_updates: u32,
     n_runs: u32,
@@ -1392,6 +1394,7 @@ mod tests_optimize {
         let p = SALSOParameters {
             n_items,
             max_size: 2,
+            strict_max_size: true,
             max_scans: 10,
             max_zealous_updates: 10,
             n_runs: 100,
@@ -1457,7 +1460,11 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         },
         None => panic!("Unsupported loss method: code = {}", loss),
     };
-    let max_size = LabelType::try_from(max_size).unwrap();
+    let (max_size, strict_max_size) = if max_size < 0 {
+        (LabelType::try_from(-max_size).unwrap(), true)
+    } else {
+        (LabelType::try_from(max_size).unwrap(), false)
+    };
     let n_runs = u32::try_from(n_runs).unwrap();
     let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
         (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
@@ -1474,6 +1481,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let p = SALSOParameters {
         n_items,
         max_size,
+        strict_max_size,
         max_scans,
         max_zealous_updates,
         n_runs,
