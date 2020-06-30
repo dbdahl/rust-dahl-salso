@@ -452,7 +452,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     rng: &mut U,
 ) -> SALSOResults {
     let n_items = draws.n_items();
-    let max_size = match (p.max_size, p.strict_max_size) {
+    let max_size = match (p.max_size, p.max_size_as_rf) {
         (0, _) => draws.max_clusters(),
         (_, false) => p.max_size.min(draws.max_clusters()),
         (_, true) => p.max_size,
@@ -488,7 +488,11 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 };
                 (state, cms, initialization_method)
             } else {
-                let state = WorkingClustering::random(n_items, max_size, rng);
+                let state = if p.max_size_as_rf {
+                    WorkingClustering::random_as_rf(n_items, max_size, draws.max_clusters(), rng)
+                } else {
+                    WorkingClustering::random(n_items, max_size, rng)
+                };
                 let cms = draws.make_confusion_matrices(&state);
                 loss_computer.initialize(&state, &cms);
                 (
@@ -593,6 +597,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 n_zealous_accepts,
                 n_zealous_attempts,
                 initialization_method,
+                max_size: state.max_clusters(),
                 ..best
             }
         }
@@ -1139,7 +1144,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
 pub struct SALSOParameters {
     n_items: usize,
     max_size: LabelType,
-    strict_max_size: bool,
+    max_size_as_rf: bool,
     max_scans: u32,
     max_zealous_updates: u32,
     n_runs: u32,
@@ -1394,7 +1399,7 @@ mod tests_optimize {
         let p = SALSOParameters {
             n_items,
             max_size: 2,
-            strict_max_size: true,
+            max_size_as_rf: true,
             max_scans: 10,
             max_zealous_updates: 10,
             n_runs: 100,
@@ -1481,7 +1486,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let p = SALSOParameters {
         n_items,
         max_size,
-        strict_max_size,
+        max_size_as_rf: strict_max_size,
         max_scans,
         max_zealous_updates,
         n_runs,

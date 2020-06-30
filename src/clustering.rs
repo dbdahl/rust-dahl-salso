@@ -128,14 +128,28 @@ impl WorkingClustering {
     }
 
     pub fn random<T: Rng>(n_items: usize, max_clusters: LabelType, rng: &mut T) -> Self {
-        WorkingClustering::from_vector(
-            {
-                let mut v = Vec::with_capacity(n_items);
-                v.resize_with(n_items, || rng.gen_range(0, max_clusters));
-                v
-            },
-            max_clusters,
-        )
+        let labels = Self::sample_1tok(n_items, max_clusters, rng);
+        WorkingClustering::from_vector(labels, max_clusters)
+    }
+
+    pub fn random_as_rf<T: Rng>(
+        n_items: usize,
+        max_clusters: LabelType,
+        max_clusters_observed: LabelType,
+        rng: &mut T,
+    ) -> Self {
+        let labels = Self::sample_1tok(n_items, max_clusters, rng);
+        let a = WorkingClustering::from_vector(labels, max_clusters);
+        let labels = a.standardize();
+        let max_clusters =
+            max_clusters_observed.max(*labels.iter().max().unwrap() as LabelType + 1);
+        WorkingClustering::from_vector(labels, max_clusters)
+    }
+
+    fn sample_1tok<T: Rng>(n_items: usize, max_clusters: LabelType, rng: &mut T) -> Vec<LabelType> {
+        let mut v = Vec::with_capacity(n_items);
+        v.resize_with(n_items, || rng.gen_range(0, max_clusters));
+        v
     }
 
     pub fn one_cluster(n_items: usize, max_clusters: LabelType) -> Self {
