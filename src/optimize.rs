@@ -351,6 +351,80 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
     }
 }
 
+// Expectation of normalized variation of information loss
+
+pub struct NVICMLossComputer<'a> {
+    cache: &'a Log2Cache,
+}
+
+impl<'a> NVICMLossComputer<'a> {
+    pub fn new(cache: &'a Log2Cache) -> Self {
+        Self { cache }
+    }
+}
+
+impl<'a> CMLossComputer for NVICMLossComputer<'a> {
+    fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
+        let nlog2n = {
+            let ni = state.n_items() as f64;
+            ni * ni.log2()
+        };
+        let u: f64 = state
+            .occupied_clusters()
+            .iter()
+            .map(|i| self.cache.nlog2n(state.size_of(*i)))
+            .sum();
+        let n_draws = cms.len_of(Axis(2));
+        let mut sum = 0.0;
+        for draw_index in 0..n_draws {
+            let mut v = 0.0;
+            let mut uv = 0.0;
+            for other_index in 0..cms.len_of(Axis(1)) {
+                let n = cms[(0, other_index, draw_index)];
+                if n > 0 {
+                    v += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
+                    for main_label in state.occupied_clusters().iter() {
+                        uv += self
+                            .cache
+                            .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
+                    }
+                }
+            }
+            sum += (u + v - 2.0 * uv) / (nlog2n - uv);
+        }
+        sum / (n_draws as f64)
+    }
+
+    fn change_in_loss(
+        &self,
+        item_index: usize,
+        to_label: LabelType,
+        from_label_option: Option<LabelType>,
+        state: &WorkingClustering,
+        cms: &Array3<CountType>,
+        draws: &Clusterings,
+    ) -> f64 {
+        let offset = if from_label_option.is_some() && to_label == from_label_option.unwrap() {
+            1
+        } else {
+            0
+        };
+        let n_draws = cms.len_of(Axis(2));
+        let mut sum = (n_draws as f64)
+            * self
+                .cache
+                .nlog2n_difference(state.size_of(to_label) - offset)
+            / 2.0;
+        let to_index = to_label as usize + 1;
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            let n12 = cms[(to_index, other_index, draw_index)] - offset;
+            sum -= self.cache.nlog2n_difference(n12);
+        }
+        sum
+    }
+}
+
 // Common
 
 fn find_label_of_minimum<I: Iterator<Item = (LabelType, f64)>>(pairs: I) -> LabelType {
@@ -1209,10 +1283,9 @@ pub fn minimize_by_salso<T: Rng>(
     n_cores: u32,
     mut rng: &mut T,
 ) -> SALSOResults {
-    let cache = Log2Cache::new(if let LossFunction::VI = loss_function {
-        p.n_items
-    } else {
-        0
+    let cache = Log2Cache::new(match loss_function {
+        LossFunction::VI | LossFunction::NVI => p.n_items,
+        _ => 0,
     });
     let stop_time = SystemTime::now() + Duration::new(seconds, nanoseconds);
     let result = if n_cores == 1 {
@@ -1252,6 +1325,13 @@ pub fn minimize_by_salso<T: Rng>(
             ),
             LossFunction::VIlb => minimize_once_by_salso(
                 Box::new(|| VILBGLossComputer::new(pdi.psm())),
+                p,
+                &stop_time,
+                rng,
+            ),
+            LossFunction::NVI => minimize_once_by_salso_v2(
+                Box::new(|| NVICMLossComputer::new(&cache)),
+                pdi.draws(),
                 p,
                 &stop_time,
                 rng,
@@ -1311,6 +1391,13 @@ pub fn minimize_by_salso<T: Rng>(
                         ),
                         LossFunction::VIlb => minimize_once_by_salso(
                             Box::new(|| VILBGLossComputer::new(pdi.psm())),
+                            &p,
+                            &stop_time,
+                            &mut child_rng,
+                        ),
+                        LossFunction::NVI => minimize_once_by_salso_v2(
+                            Box::new(|| NVICMLossComputer::new(cache_ref)),
+                            pdi.draws(),
                             &p,
                             &stop_time,
                             &mut child_rng,
@@ -1454,7 +1541,10 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
     let (loss_function, pdi) = match LossFunction::from_code(loss) {
         Some(loss_function) => match loss_function {
-            LossFunction::BinderDraws | LossFunction::OneMinusARI | LossFunction::VI => (
+            LossFunction::BinderDraws
+            | LossFunction::OneMinusARI
+            | LossFunction::VI
+            | LossFunction::NVI => (
                 loss_function,
                 PartitionDistributionInformation::Draws(&draws),
             ),
@@ -1519,12 +1609,13 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let f = match LossFunction::from_code(loss) {
         Some(loss_function) => match loss_function {
-            LossFunction::BinderDraws => panic!("No implementation for binder2."),
+            LossFunction::BinderDraws => panic!("No implementation for binder."),
             LossFunction::BinderPSM => binder_single_kernel,
             LossFunction::OneMinusARI => panic!("No implementation for omARI."),
             LossFunction::OneMinusARIapprox => omariapprox_single,
             LossFunction::VI => panic!("No implementation for VI."),
             LossFunction::VIlb => vilb_single_kernel,
+            LossFunction::NVI => panic!("No implementation for NVI."),
         },
         None => panic!("Unsupported loss method: code = {}", loss),
     };

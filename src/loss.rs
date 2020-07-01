@@ -3,7 +3,7 @@ use dahl_partition::*;
 use crate::clustering::{Clusterings, WorkingClustering};
 use crate::log2cache::Log2Cache;
 use crate::optimize::{
-    BinderCMLossComputer, CMLossComputer, OMARICMLossComputer, VICMLossComputer,
+    BinderCMLossComputer, CMLossComputer, NVICMLossComputer, OMARICMLossComputer, VICMLossComputer,
 };
 use crate::*;
 use std::slice;
@@ -270,6 +270,15 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
             let cache = Log2Cache::new(ni);
             compute_loss_multiple(
                 Box::new(|| VICMLossComputer::new(&cache)),
+                &partitions,
+                &draws,
+                results,
+            )
+        }
+        Some(LossFunction::NVI) => {
+            let cache = Log2Cache::new(ni);
+            compute_loss_multiple(
+                Box::new(|| NVICMLossComputer::new(&cache)),
                 &partitions,
                 &draws,
                 results,
