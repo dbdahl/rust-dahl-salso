@@ -237,7 +237,7 @@ impl CMLossComputer for OMARICMLossComputer {
                 sum += numerator / denominator;
             }
         }
-        1.0 - sum / (n_draws as f64)
+        -sum
     }
 
     fn decision_callback(
@@ -408,39 +408,6 @@ impl<'a> CMLossComputer for NVICMLossComputer<'a> {
         sum / (n_draws as f64)
     }
 
-    /*
-    fn compute_loss2(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
-        let nlog2n = {
-            let ni = state.n_items() as f64;
-            ni * ni.log2()
-        };
-        let u: f64 = state
-            .occupied_clusters()
-            .iter()
-            .map(|i| self.cache.nlog2n(state.size_of(*i)))
-            .sum();
-        let n_draws = cms.len_of(Axis(2));
-        let mut sum = 0.0;
-        for draw_index in 0..n_draws {
-            let mut v = 0.0;
-            let mut uv = 0.0;
-            for other_index in 0..cms.len_of(Axis(1)) {
-                let n = cms[(0, other_index, draw_index)];
-                if n > 0 {
-                    v += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
-                    for main_label in state.occupied_clusters().iter() {
-                        uv += self
-                            .cache
-                            .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
-                    }
-                }
-            }
-            sum += (u + v - 2.0 * uv) / (nlog2n - uv);
-        }
-        sum / (n_draws as f64)
-    }
-    */
-
     fn change_in_loss(
         &self,
         item_index: usize,
@@ -455,17 +422,46 @@ impl<'a> CMLossComputer for NVICMLossComputer<'a> {
         } else {
             0
         };
-        let n_draws = cms.len_of(Axis(2));
-        let mut sum = (n_draws as f64)
-            * self
-                .cache
-                .nlog2n_difference(state.size_of(to_label) - offset)
-            / 2.0;
+        let mut v = if offset == 0 {
+            self.sum + self.cache.nlog2n_difference(state.size_of(to_label))
+        } else {
+            self.sum
+        };
         let to_index = to_label as usize + 1;
+        let (n, from_index) = if from_label_option.is_some() {
+            if offset == 0 {
+                v -= self
+                    .cache
+                    .nlog2n_difference(state.size_of(from_label_option.unwrap()) - 1);
+            }
+            (self.n, from_label_option.unwrap() as usize + 1)
+        } else {
+            (self.n + 1, 0)
+        };
+        let ni = n as f64;
+        let nlog2n = ni * ni.log2();
+        let mut sum = 0.0;
+        let n_draws = self.sums.len_of(Axis(0));
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            let n12 = cms[(to_index, other_index, draw_index)] - offset;
-            sum -= self.cache.nlog2n_difference(n12);
+            let u = self.sums[(draw_index, 0)]
+                + if from_label_option.is_none() {
+                    self.cache.nlog2n_difference(n)
+                } else {
+                    0.0
+                };
+            let mut uv = self.sums[(draw_index, 1)];
+            if offset == 0 {
+                uv += self
+                    .cache
+                    .nlog2n_difference(cms[(to_index, other_index, draw_index)]);
+                if from_label_option.is_some() {
+                    uv -= self
+                        .cache
+                        .nlog2n_difference(cms[(from_index, other_index, draw_index)] - 1)
+                }
+            }
+            sum += (u + v - 2.0 * uv) / (nlog2n - uv);
         }
         sum
     }
