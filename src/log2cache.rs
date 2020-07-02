@@ -44,8 +44,8 @@ impl Log2Cache {
         unsafe { *self.nlog2n.get_unchecked(n as usize) }
     }
 
-    pub fn nlog2n_difference(&self, x: CountType) -> f64 {
-        unsafe { *self.nlog2n_difference.get_unchecked(x as usize) }
+    pub fn nlog2n_difference(&self, n: CountType) -> f64 {
+        unsafe { *self.nlog2n_difference.get_unchecked(n as usize) }
     }
 }
 

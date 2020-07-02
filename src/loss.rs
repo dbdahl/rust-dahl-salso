@@ -278,7 +278,7 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
         Some(LossFunction::NVI) => {
             let cache = Log2Cache::new(ni);
             compute_loss_multiple(
-                Box::new(|| NVICMLossComputer::new(&cache)),
+                Box::new(|| NVICMLossComputer::new(nd, &cache)),
                 &partitions,
                 &draws,
                 results,

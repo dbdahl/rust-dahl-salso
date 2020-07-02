@@ -121,7 +121,7 @@ impl CMLossComputer for BinderCMLossComputer {
 
 pub struct OMARICMLossComputer {
     n: CountType,
-    sum2: f64,
+    sum: f64,
     sums: Array2<f64>,
 }
 
@@ -129,7 +129,7 @@ impl OMARICMLossComputer {
     pub fn new(n_draws: usize) -> Self {
         Self {
             n: 0,
-            sum2: 0.0,
+            sum: 0.0,
             sums: Array2::<f64>::zeros((n_draws, 2)),
         }
     }
@@ -143,7 +143,7 @@ impl OMARICMLossComputer {
 impl CMLossComputer for OMARICMLossComputer {
     fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
         self.n = state.n_items();
-        self.sum2 = state
+        self.sum = state
             .occupied_clusters()
             .iter()
             .map(|i| OMARICMLossComputer::n_choose_2_times_2(state.size_of(*i)))
@@ -166,7 +166,7 @@ impl CMLossComputer for OMARICMLossComputer {
 
     fn compute_loss(&self, _state: &WorkingClustering, _cms: &Array3<CountType>) -> f64 {
         let mut sum = 0.0;
-        let sum2 = self.sum2;
+        let sum2 = self.sum;
         let sum2_div_denom = sum2 / OMARICMLossComputer::n_choose_2_times_2(self.n);
         let n_draws = self.sums.len_of(Axis(0));
         for draw_index in 0..n_draws {
@@ -196,9 +196,9 @@ impl CMLossComputer for OMARICMLossComputer {
             0
         };
         let mut sum2 = if offset == 0 {
-            self.sum2 + 2.0 * state.size_of(to_label) as f64
+            self.sum + 2.0 * state.size_of(to_label) as f64
         } else {
-            self.sum2
+            self.sum
         };
         let to_index = to_label as usize + 1;
         let mut n = self.n;
@@ -250,14 +250,14 @@ impl CMLossComputer for OMARICMLossComputer {
         draws: &Clusterings,
     ) {
         let to_index = if to_label_option.is_some() {
-            self.sum2 += 2.0 * state.size_of(to_label_option.unwrap()) as f64;
+            self.sum += 2.0 * state.size_of(to_label_option.unwrap()) as f64;
             to_label_option.unwrap() as usize + 1
         } else {
             self.n -= 1;
             0
         };
         let from_index = if from_label_option.is_some() {
-            self.sum2 -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
+            self.sum -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
             from_label_option.unwrap() as usize + 1
         } else {
             self.n += 1;
@@ -355,16 +355,61 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
 
 pub struct NVICMLossComputer<'a> {
     cache: &'a Log2Cache,
+    n: CountType,
+    sum: f64,
+    sums: Array2<f64>,
 }
 
 impl<'a> NVICMLossComputer<'a> {
-    pub fn new(cache: &'a Log2Cache) -> Self {
-        Self { cache }
+    pub fn new(n_draws: usize, cache: &'a Log2Cache) -> Self {
+        Self {
+            cache,
+            n: 0,
+            sum: 0.0,
+            sums: Array2::<f64>::zeros((n_draws, 2)),
+        }
     }
 }
 
 impl<'a> CMLossComputer for NVICMLossComputer<'a> {
-    fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
+    fn initialize(&mut self, state: &WorkingClustering, cms: &Array3<CountType>) {
+        self.n = state.n_items();
+        self.sum = state
+            .occupied_clusters()
+            .iter()
+            .map(|i| self.cache.nlog2n(state.size_of(*i)))
+            .sum();
+        let n_draws = cms.len_of(Axis(2));
+        for draw_index in 0..n_draws {
+            for other_index in 0..cms.len_of(Axis(1)) {
+                let n = cms[(0, other_index, draw_index)];
+                if n > 0 {
+                    self.sums[(draw_index, 0)] +=
+                        self.cache.nlog2n(cms[(0, other_index, draw_index)]);
+                    for main_label in state.occupied_clusters().iter() {
+                        self.sums[(draw_index, 1)] += self
+                            .cache
+                            .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
+                    }
+                }
+            }
+        }
+    }
+
+    fn compute_loss(&self, _state: &WorkingClustering, _cms: &Array3<CountType>) -> f64 {
+        let ni = self.n as f64;
+        let nlog2n = ni * ni.log2();
+        let mut sum = 0.0;
+        let n_draws = self.sums.len_of(Axis(0));
+        for draw_index in 0..n_draws {
+            let uv = self.sums[(draw_index, 1)];
+            sum += (self.sum + self.sums[(draw_index, 0)] - 2.0 * uv) / (nlog2n - uv);
+        }
+        sum / (n_draws as f64)
+    }
+
+    /*
+    fn compute_loss2(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let nlog2n = {
             let ni = state.n_items() as f64;
             ni * ni.log2()
@@ -394,6 +439,7 @@ impl<'a> CMLossComputer for NVICMLossComputer<'a> {
         }
         sum / (n_draws as f64)
     }
+    */
 
     fn change_in_loss(
         &self,
@@ -422,6 +468,57 @@ impl<'a> CMLossComputer for NVICMLossComputer<'a> {
             sum -= self.cache.nlog2n_difference(n12);
         }
         sum
+    }
+
+    fn decision_callback(
+        &mut self,
+        item_index: usize,
+        to_label_option: Option<LabelType>,
+        from_label_option: Option<LabelType>,
+        state: &WorkingClustering,
+        cms: &Array3<CountType>,
+        draws: &Clusterings,
+    ) {
+        let to_index = if to_label_option.is_some() {
+            self.sum += self
+                .cache
+                .nlog2n_difference(state.size_of(to_label_option.unwrap()));
+            to_label_option.unwrap() as usize + 1
+        } else {
+            self.n -= 1;
+            0
+        };
+        let from_index = if from_label_option.is_some() {
+            self.sum -= self
+                .cache
+                .nlog2n_difference(state.size_of(from_label_option.unwrap()) - 1);
+            from_label_option.unwrap() as usize + 1
+        } else {
+            self.n += 1;
+            0
+        };
+        let n_draws = draws.n_clusterings();
+        for draw_index in 0..n_draws {
+            let other_index = draws.label(draw_index, item_index) as usize;
+            if from_label_option.is_some() {
+                self.sums[(draw_index, 1)] -= self
+                    .cache
+                    .nlog2n_difference(cms[(from_index, other_index, draw_index)] - 1);
+            } else {
+                self.sums[(draw_index, 0)] += self
+                    .cache
+                    .nlog2n_difference(cms[(0, other_index, draw_index)]);
+            }
+            if to_label_option.is_some() {
+                self.sums[(draw_index, 1)] += self
+                    .cache
+                    .nlog2n_difference(cms[(to_index, other_index, draw_index)]);
+            } else {
+                self.sums[(draw_index, 0)] -= self
+                    .cache
+                    .nlog2n_difference(cms[(0, other_index, draw_index)] - 1);
+            }
+        }
     }
 }
 
@@ -1330,7 +1427,7 @@ pub fn minimize_by_salso<T: Rng>(
                 rng,
             ),
             LossFunction::NVI => minimize_once_by_salso_v2(
-                Box::new(|| NVICMLossComputer::new(&cache)),
+                Box::new(|| NVICMLossComputer::new(pdi.draws().n_clusterings(), &cache)),
                 pdi.draws(),
                 p,
                 &stop_time,
@@ -1396,7 +1493,9 @@ pub fn minimize_by_salso<T: Rng>(
                             &mut child_rng,
                         ),
                         LossFunction::NVI => minimize_once_by_salso_v2(
-                            Box::new(|| NVICMLossComputer::new(cache_ref)),
+                            Box::new(|| {
+                                NVICMLossComputer::new(pdi.draws().n_clusterings(), cache_ref)
+                            }),
                             pdi.draws(),
                             &p,
                             &stop_time,
