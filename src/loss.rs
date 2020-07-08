@@ -3,7 +3,8 @@ use dahl_partition::*;
 use crate::clustering::{Clusterings, WorkingClustering};
 use crate::log2cache::Log2Cache;
 use crate::optimize::{
-    BinderCMLossComputer, CMLossComputer, NVICMLossComputer, OMARICMLossComputer, VICMLossComputer,
+    BinderCMLossComputer, CMLossComputer, IDCMLossComputer, NIDCMLossComputer, NVICMLossComputer,
+    OMARICMLossComputer, VICMLossComputer,
 };
 use crate::*;
 use std::slice;
@@ -275,6 +276,7 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
                 results,
             )
         }
+        Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
         Some(LossFunction::NVI) => {
             let cache = Log2Cache::new(ni);
             compute_loss_multiple(
@@ -284,7 +286,24 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
                 results,
             )
         }
-        Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
+        Some(LossFunction::ID) => {
+            let cache = Log2Cache::new(ni);
+            compute_loss_multiple(
+                Box::new(|| IDCMLossComputer::new(nd, &cache)),
+                &partitions,
+                &draws,
+                results,
+            )
+        }
+        Some(LossFunction::NID) => {
+            let cache = Log2Cache::new(ni);
+            compute_loss_multiple(
+                Box::new(|| NIDCMLossComputer::new(nd, &cache)),
+                &partitions,
+                &draws,
+                results,
+            )
+        }
         None => panic!("Unsupported loss method: {}", loss),
     };
 }

@@ -46,6 +46,8 @@ pub enum LossFunction {
     VI,
     VIlb,
     NVI,
+    ID,
+    NID,
 }
 
 impl LossFunction {
@@ -58,6 +60,8 @@ impl LossFunction {
             4 => Some(LossFunction::VI),
             5 => Some(LossFunction::VIlb),
             6 => Some(LossFunction::NVI),
+            7 => Some(LossFunction::ID),
+            8 => Some(LossFunction::NID),
             _ => None,
         }
     }
