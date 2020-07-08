@@ -605,8 +605,6 @@ impl<'a> CMLossComputer for IDCMLossComputer<'a> {
         } else {
             (self.n + 1, 0)
         };
-        let ni = n as f64;
-        let nlog2n = ni * ni.log2();
         let mut sum = 0.0;
         let n_draws = self.sums.len_of(Axis(0));
         for draw_index in 0..n_draws {
@@ -628,7 +626,7 @@ impl<'a> CMLossComputer for IDCMLossComputer<'a> {
                         .nlog2n_difference(cms[(from_index, other_index, draw_index)] - 1)
                 }
             }
-            sum += (u + v - 2.0 * uv) / (nlog2n - uv);
+            sum += u + v - uv - u.min(v);
         }
         sum
     }
@@ -797,9 +795,9 @@ impl<'a> CMLossComputer for NIDCMLossComputer<'a> {
                         .nlog2n_difference(cms[(from_index, other_index, draw_index)] - 1)
                 }
             }
-            sum += (u + v - 2.0 * uv) / (nlog2n - uv);
+            sum += (nlog2n + uv - u - v) / (nlog2n - u.min(v));
         }
-        sum
+        -sum
     }
 
     fn decision_callback(
