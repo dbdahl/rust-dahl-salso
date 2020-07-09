@@ -410,15 +410,15 @@ where
     fn compute_loss(&self, _state: &WorkingClustering, _cms: &Array3<CountType>) -> f64 {
         let ni = self.n as f64;
         let nlog2n = ni * ni.log2();
+        let u = self.sum;
         let mut sum = 0.0;
         let n_draws = self.sums.len_of(Axis(0));
         for draw_index in 0..n_draws {
-            let u = self.sum;
             let v = self.sums[(draw_index, 0)];
             let uv = self.sums[(draw_index, 1)];
-            sum += self.ibloss.compute_intermediate(u, v, uv, nlog2n);
+            sum += self.ibloss.compute_kernel(u, v, uv, nlog2n);
         }
-        self.ibloss.compute_final(sum, n_draws as f64, ni)
+        self.ibloss.finalize(sum, n_draws as f64, ni)
     }
 
     fn change_in_loss(
@@ -474,9 +474,9 @@ where
                         .nlog2n_difference(cms[(from_index, other_index, draw_index)] - 1)
                 }
             }
-            sum += self.ibloss.decision_intermediate(u, v, uv, nlog2n);
+            sum += self.ibloss.compute_kernel(u, v, uv, nlog2n);
         }
-        self.ibloss.decision_final(sum, n_draws as f64)
+        self.ibloss.score(sum)
     }
 
     fn decision_callback(
@@ -532,10 +532,9 @@ where
 }
 
 pub trait InformationBasedLoss {
-    fn compute_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64;
-    fn compute_final(&self, sum: f64, n_draws: f64, n_items: f64) -> f64;
-    fn decision_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64;
-    fn decision_final(&self, sum: f64, n_draws: f64) -> f64;
+    fn compute_kernel(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64;
+    fn finalize(&self, sum: f64, n_draws: f64, n_items: f64) -> f64;
+    fn score(&self, sum: f64) -> f64;
 }
 
 // Expectation of normalized variation of information loss
@@ -543,16 +542,13 @@ pub trait InformationBasedLoss {
 pub struct NVIInformationBasedLoss;
 
 impl InformationBasedLoss for NVIInformationBasedLoss {
-    fn compute_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
+    fn compute_kernel(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
         (u + v - 2.0 * uv) / (nlog2n - uv)
     }
-    fn compute_final(&self, sum: f64, n_draws: f64, _n_items: f64) -> f64 {
+    fn finalize(&self, sum: f64, n_draws: f64, _n_items: f64) -> f64 {
         sum / n_draws
     }
-    fn decision_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
-        self.compute_intermediate(u, v, uv, nlog2n)
-    }
-    fn decision_final(&self, sum: f64, _n_draws: f64) -> f64 {
+    fn score(&self, sum: f64) -> f64 {
         sum
     }
 }
@@ -562,16 +558,13 @@ impl InformationBasedLoss for NVIInformationBasedLoss {
 pub struct IDInformationBasedLoss;
 
 impl InformationBasedLoss for IDInformationBasedLoss {
-    fn compute_intermediate(&self, u: f64, v: f64, uv: f64, _nlog2n: f64) -> f64 {
+    fn compute_kernel(&self, u: f64, v: f64, uv: f64, _nlog2n: f64) -> f64 {
         u + v - uv - u.min(v)
     }
-    fn compute_final(&self, sum: f64, n_draws: f64, n_items: f64) -> f64 {
+    fn finalize(&self, sum: f64, n_draws: f64, n_items: f64) -> f64 {
         sum / (n_draws * n_items)
     }
-    fn decision_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
-        self.compute_intermediate(u, v, uv, nlog2n)
-    }
-    fn decision_final(&self, sum: f64, _n_draws: f64) -> f64 {
+    fn score(&self, sum: f64) -> f64 {
         sum
     }
 }
@@ -581,16 +574,13 @@ impl InformationBasedLoss for IDInformationBasedLoss {
 pub struct NIDInformationBasedLoss;
 
 impl InformationBasedLoss for NIDInformationBasedLoss {
-    fn compute_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
+    fn compute_kernel(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
         (nlog2n + uv - u - v) / (nlog2n - u.min(v))
     }
-    fn compute_final(&self, sum: f64, n_draws: f64, _n_items: f64) -> f64 {
+    fn finalize(&self, sum: f64, n_draws: f64, _n_items: f64) -> f64 {
         1.0 - sum / n_draws
     }
-    fn decision_intermediate(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
-        self.compute_intermediate(u, v, uv, nlog2n)
-    }
-    fn decision_final(&self, sum: f64, _n_draws: f64) -> f64 {
+    fn score(&self, sum: f64) -> f64 {
         -sum
     }
 }
