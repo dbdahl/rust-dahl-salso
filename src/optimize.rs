@@ -838,12 +838,18 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
         }
         if seconds_target.is_finite() {
             let seconds = start_time.elapsed().as_secs_f64();
-            if seconds >= seconds_target {
-                return SALSOResults {
-                    n_runs: run_counter,
-                    seconds,
-                    ..best
-                };
+            let rc = run_counter as f64;
+            let seconds_per_run = seconds / rc;
+            let projected_seconds_if_another = (rc + 1.0) * seconds_per_run;
+            if projected_seconds_if_another >= seconds_target {
+                let prob_stop = (projected_seconds_if_another - seconds_target) / seconds_per_run;
+                if rng.gen_range(0.0, 1.0) < prob_stop {
+                    return SALSOResults {
+                        n_runs: run_counter,
+                        seconds,
+                        ..best
+                    };
+                }
             }
         }
     }
@@ -1368,12 +1374,18 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
         run_counter += 1;
         if seconds_target.is_finite() {
             let seconds = start_time.elapsed().as_secs_f64();
-            if seconds >= seconds_target {
-                return SALSOResults {
-                    n_runs: run_counter,
-                    seconds,
-                    ..best
-                };
+            let rc = run_counter as f64;
+            let seconds_per_run = seconds / rc;
+            let projected_seconds_if_another = (rc + 1.0) * seconds_per_run;
+            if projected_seconds_if_another >= seconds_target {
+                let prob_stop = (projected_seconds_if_another - seconds_target) / seconds_per_run;
+                if rng.gen_range(0.0, 1.0) < prob_stop {
+                    return SALSOResults {
+                        n_runs: run_counter,
+                        seconds,
+                        ..best
+                    };
+                }
             }
         }
     }
