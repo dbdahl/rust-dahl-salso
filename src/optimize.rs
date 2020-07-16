@@ -16,7 +16,7 @@ use std::convert::TryFrom;
 use std::f64;
 use std::slice;
 use std::sync::mpsc;
-use std::time::{Duration, SystemTime};
+use std::time::Instant;
 
 // **************************************************************
 // Implementation of SALSO for losses based on confusion matrices
@@ -682,9 +682,10 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     loss_computer_factory: Box<dyn Fn() -> T + 'a>,
     draws: &Clusterings,
     p: &SALSOParameters,
-    stop_time: &SystemTime,
+    seconds_target: f64,
     rng: &mut U,
 ) -> SALSOResults {
+    let start_time = Instant::now();
     let n_items = draws.n_items();
     let max_size = match (p.max_size, p.max_size_as_rf) {
         (0, _) => draws.max_clusters(),
@@ -835,15 +836,20 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                 ..best
             }
         }
-        if SystemTime::now() > *stop_time {
-            return SALSOResults {
-                n_runs: run_counter,
-                ..best
-            };
+        if seconds_target.is_finite() {
+            let seconds = start_time.elapsed().as_secs_f64();
+            if seconds >= seconds_target {
+                return SALSOResults {
+                    n_runs: run_counter,
+                    seconds,
+                    ..best
+                };
+            }
         }
     }
     SALSOResults {
         n_runs: p.n_runs,
+        seconds: start_time.elapsed().as_secs_f64(),
         ..best
     }
 }
@@ -1276,9 +1282,10 @@ fn micro_optimized_allocation<U: GeneralLossComputer>(
 pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     computer_factory: Box<dyn Fn() -> U + 'a>,
     p: &SALSOParameters,
-    stop_time: &SystemTime,
+    seconds_target: f64,
     rng: &mut T,
 ) -> SALSOResults {
+    let start_time = Instant::now();
     let max_label = if p.max_size == 0 {
         LabelType::MAX - 1
     } else {
@@ -1359,15 +1366,20 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             };
         }
         run_counter += 1;
-        if SystemTime::now() > *stop_time {
-            return SALSOResults {
-                n_runs: run_counter,
-                ..best
-            };
+        if seconds_target.is_finite() {
+            let seconds = start_time.elapsed().as_secs_f64();
+            if seconds >= seconds_target {
+                return SALSOResults {
+                    n_runs: run_counter,
+                    seconds,
+                    ..best
+                };
+            }
         }
     }
     SALSOResults {
         n_runs: p.n_runs,
+        seconds: start_time.elapsed().as_secs_f64(),
         ..best
     }
 }
@@ -1395,6 +1407,7 @@ pub struct SALSOResults {
     initialization_method: InitializationMethod,
     n_runs: u32,
     max_size: LabelType,
+    seconds: f64,
 }
 
 impl SALSOResults {
@@ -1407,6 +1420,7 @@ impl SALSOResults {
         initialization_method: InitializationMethod,
         n_runs: u32,
         max_size: LabelType,
+        seconds: f64,
     ) -> Self {
         Self {
             clustering,
@@ -1417,6 +1431,7 @@ impl SALSOResults {
             initialization_method,
             n_runs,
             max_size,
+            seconds,
         }
     }
 
@@ -1430,6 +1445,7 @@ impl SALSOResults {
             InitializationMethod::SequentialFromEmpty,
             0,
             max_size,
+            0.0,
         )
     }
 }
@@ -1438,8 +1454,7 @@ pub fn minimize_by_salso<T: Rng>(
     pdi: PartitionDistributionInformation,
     loss_function: LossFunction,
     p: &SALSOParameters,
-    seconds: u64,
-    nanoseconds: u32,
+    seconds: f64,
     n_cores: u32,
     mut rng: &mut T,
 ) -> SALSOResults {
@@ -1447,46 +1462,45 @@ pub fn minimize_by_salso<T: Rng>(
         LossFunction::VI | LossFunction::NVI | LossFunction::ID | LossFunction::NID => p.n_items,
         _ => 0,
     });
-    let stop_time = SystemTime::now() + Duration::new(seconds, nanoseconds);
     let result = if n_cores == 1 {
         match loss_function {
             LossFunction::BinderDraws => minimize_once_by_salso_v2(
                 Box::new(|| BinderCMLossComputer::new()),
                 pdi.draws(),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::BinderPSM => minimize_once_by_salso(
                 Box::new(|| BinderGLossComputer::new(pdi.psm())),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::OneMinusARI => minimize_once_by_salso_v2(
                 Box::new(|| OMARICMLossComputer::new(pdi.draws().n_clusterings())),
                 pdi.draws(),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::OneMinusARIapprox => minimize_once_by_salso(
                 Box::new(|| OMARIApproxGLossComputer::new(pdi.psm())),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::VI => minimize_once_by_salso_v2(
                 Box::new(|| VICMLossComputer::new(&cache)),
                 pdi.draws(),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::VIlb => minimize_once_by_salso(
                 Box::new(|| VILBGLossComputer::new(pdi.psm())),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::NVI => minimize_once_by_salso_v2(
@@ -1499,7 +1513,7 @@ pub fn minimize_by_salso<T: Rng>(
                 }),
                 pdi.draws(),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::ID => minimize_once_by_salso_v2(
@@ -1512,7 +1526,7 @@ pub fn minimize_by_salso<T: Rng>(
                 }),
                 pdi.draws(),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
             LossFunction::NID => minimize_once_by_salso_v2(
@@ -1525,7 +1539,7 @@ pub fn minimize_by_salso<T: Rng>(
                 }),
                 pdi.draws(),
                 p,
-                &stop_time,
+                seconds,
                 rng,
             ),
         }
@@ -1552,39 +1566,39 @@ pub fn minimize_by_salso<T: Rng>(
                             Box::new(|| BinderCMLossComputer::new()),
                             pdi.draws(),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::BinderPSM => minimize_once_by_salso(
                             Box::new(|| BinderGLossComputer::new(pdi.psm())),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::OneMinusARI => minimize_once_by_salso_v2(
                             Box::new(|| OMARICMLossComputer::new(pdi.draws().n_clusterings())),
                             pdi.draws(),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::OneMinusARIapprox => minimize_once_by_salso(
                             Box::new(|| OMARIApproxGLossComputer::new(pdi.psm())),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::VI => minimize_once_by_salso_v2(
                             Box::new(|| VICMLossComputer::new(cache_ref)),
                             pdi.draws(),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::VIlb => minimize_once_by_salso(
                             Box::new(|| VILBGLossComputer::new(pdi.psm())),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::NVI => minimize_once_by_salso_v2(
@@ -1597,7 +1611,7 @@ pub fn minimize_by_salso<T: Rng>(
                             }),
                             pdi.draws(),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::ID => minimize_once_by_salso_v2(
@@ -1610,7 +1624,7 @@ pub fn minimize_by_salso<T: Rng>(
                             }),
                             pdi.draws(),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                         LossFunction::NID => minimize_once_by_salso_v2(
@@ -1623,7 +1637,7 @@ pub fn minimize_by_salso<T: Rng>(
                             }),
                             pdi.draws(),
                             &p,
-                            &stop_time,
+                            seconds,
                             &mut child_rng,
                         ),
                     };
@@ -1721,8 +1735,7 @@ mod tests_optimize {
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
             LossFunction::VIlb,
             &p,
-            5,
-            0,
+            5.0,
             1,
             &mut thread_rng(),
         );
@@ -1754,6 +1767,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     results_n_runs_ptr: *mut i32,
     results_max_size_ptr: *mut i32,
     results_initialization_method_ptr: *mut i32,
+    results_seconds_ptr: *mut f64,
     seed_ptr: *const i32, // Assumed length is 32
 ) {
     let n_items = usize::try_from(n_items).unwrap();
@@ -1787,14 +1801,6 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         (LabelType::try_from(max_size).unwrap(), false)
     };
     let n_runs = u32::try_from(n_runs).unwrap();
-    let (secs, nanos) = if seconds.is_infinite() || seconds < 0.0 {
-        (1000 * 365 * 24 * 60 * 60, 0) // 1,000 years
-    } else {
-        (
-            seconds.floor() as u64,
-            ((seconds - seconds.floor()) * 1_000_000_000.0).floor() as u32,
-        )
-    };
     let max_scans = u32::try_from(max_scans).unwrap();
     let max_zealous_updates = u32::try_from(max_zealous_updates).unwrap();
     let n_cores = u32::try_from(n_cores).unwrap();
@@ -1809,7 +1815,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         prob_sequential_allocation,
         prob_singletons_initialization,
     };
-    let results = minimize_by_salso(pdi, loss_function, &p, secs, nanos, n_cores, &mut rng);
+    let results = minimize_by_salso(pdi, loss_function, &p, seconds, n_cores, &mut rng);
     let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
     for (i, v) in results.clustering.iter().enumerate() {
         results_slice[i] = i32::try_from(*v + 1).unwrap();
@@ -1820,6 +1826,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     *results_n_zealous_attempts_ptr = i32::try_from(results.n_zealous_attempts).unwrap();
     *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
     *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
+    *results_seconds_ptr = results.seconds;
     *results_initialization_method_ptr =
         i32::try_from(results.initialization_method.to_code()).unwrap();
 }
