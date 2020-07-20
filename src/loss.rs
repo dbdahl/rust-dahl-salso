@@ -243,6 +243,7 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     draws_ptr: *mut i32,
     psm_ptr: *mut f64,
     loss: i32,
+    a: f64,
     results_ptr: *mut f64,
 ) {
     let np = n_partitions as usize;
@@ -252,10 +253,10 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
     let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, ni, true);
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
     let results = slice::from_raw_parts_mut(results_ptr, np);
-    let loss_function = LossFunction::from_code(loss);
+    let loss_function = LossFunction::from_code(loss, a);
     match loss_function {
-        Some(LossFunction::BinderDraws) => compute_loss_multiple(
-            Box::new(|| BinderCMLossComputer::new()),
+        Some(LossFunction::BinderDraws(a)) => compute_loss_multiple(
+            Box::new(|| BinderCMLossComputer::new(a)),
             &partitions,
             &draws,
             results,

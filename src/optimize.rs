@@ -53,11 +53,14 @@ pub trait CMLossComputer {
 
 // Expectation of the Binder loss
 
-pub struct BinderCMLossComputer {}
+pub struct BinderCMLossComputer {
+    a: f64,
+}
 
 impl BinderCMLossComputer {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(a: f64) -> Self {
+        println!("a: {}", a);
+        Self { a }
     }
 
     pub fn n_squared(x: CountType) -> f64 {
@@ -1476,8 +1479,8 @@ pub fn minimize_by_salso<T: Rng>(
     });
     let result = if n_cores == 1 {
         match loss_function {
-            LossFunction::BinderDraws => minimize_once_by_salso_v2(
-                Box::new(|| BinderCMLossComputer::new()),
+            LossFunction::BinderDraws(a) => minimize_once_by_salso_v2(
+                Box::new(|| BinderCMLossComputer::new(a)),
                 pdi.draws(),
                 p,
                 seconds,
@@ -1574,8 +1577,8 @@ pub fn minimize_by_salso<T: Rng>(
                 let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
                 s.spawn(move |_| {
                     let result = match loss_function {
-                        LossFunction::BinderDraws => minimize_once_by_salso_v2(
-                            Box::new(|| BinderCMLossComputer::new()),
+                        LossFunction::BinderDraws(a) => minimize_once_by_salso_v2(
+                            Box::new(|| BinderCMLossComputer::new(a)),
                             pdi.draws(),
                             &p,
                             seconds,
@@ -1763,6 +1766,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     draws_ptr: *mut i32,
     psm_ptr: *mut f64,
     loss: i32,
+    a: f64,
     max_size: i32,
     n_runs: i32,
     seconds: f64,
@@ -1789,9 +1793,9 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         n_items,
     );
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
-    let (loss_function, pdi) = match LossFunction::from_code(loss) {
+    let (loss_function, pdi) = match LossFunction::from_code(loss, a) {
         Some(loss_function) => match loss_function {
-            LossFunction::BinderDraws
+            LossFunction::BinderDraws(_)
             | LossFunction::OneMinusARI
             | LossFunction::VI
             | LossFunction::NVI
@@ -1848,13 +1852,14 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
     n_items: i32,
     psm_ptr: *mut f64,
     loss: i32,
+    a: f64,
     results_label_ptr: *mut i32,
 ) {
     let ni = usize::try_from(n_items).unwrap();
     let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
-    let f = match LossFunction::from_code(loss) {
+    let f = match LossFunction::from_code(loss, a) {
         Some(loss_function) => match loss_function {
-            LossFunction::BinderDraws => panic!("No implementation for binder."),
+            LossFunction::BinderDraws(_) => panic!("No implementation for binder."),
             LossFunction::BinderPSM => binder_single_kernel,
             LossFunction::OneMinusARI => panic!("No implementation for omARI."),
             LossFunction::OneMinusARIapprox => omariapprox_single,
