@@ -59,7 +59,6 @@ pub struct BinderCMLossComputer {
 
 impl BinderCMLossComputer {
     pub fn new(a: f64) -> Self {
-        println!("a: {}", a);
         Self { a }
     }
 
@@ -71,20 +70,23 @@ impl BinderCMLossComputer {
 
 impl CMLossComputer for BinderCMLossComputer {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
-        let mut sum: f64 = state
-            .occupied_clusters()
-            .iter()
-            .map(|i| BinderCMLossComputer::n_squared(state.size_of(*i)))
-            .sum();
         let n_draws = cms.len_of(Axis(2));
-        sum *= n_draws as f64;
+        let sum1 = self.a
+            * state
+                .occupied_clusters()
+                .iter()
+                .map(|i| BinderCMLossComputer::n_squared(state.size_of(*i)))
+                .sum::<f64>()
+            * n_draws as f64;
+        let mut sum2 = 0.0;
+        let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             for other_index in 0..cms.len_of(Axis(1)) {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
-                    sum += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
+                    sum2 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
-                        sum -= 2.0
+                        sum3 += 2.0
                             * BinderCMLossComputer::n_squared(
                                 cms[(*main_label as usize + 1, other_index, draw_index)],
                             );
@@ -92,7 +94,7 @@ impl CMLossComputer for BinderCMLossComputer {
                 }
             }
         }
-        sum / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
+        (sum1 + sum2 - self.a*sum3) / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
     }
 
     fn change_in_loss(
@@ -110,13 +112,14 @@ impl CMLossComputer for BinderCMLossComputer {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let mut sum = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64) / 2.0;
+        let sum1 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64) / 2.0;
         let to_index = to_label as usize + 1;
+		let mut sum2 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            sum -= (cms[(to_index, other_index, draw_index)] - offset) as f64;
+            sum2 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
-        sum
+        sum1 - self.a * sum2
     }
 }
 
