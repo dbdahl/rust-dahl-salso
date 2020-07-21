@@ -94,7 +94,8 @@ impl CMLossComputer for BinderCMLossComputer {
                 }
             }
         }
-        (sum1 + sum2 - self.a*sum3) / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
+        (sum1 + sum2 - self.a * sum3)
+            / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
     }
 
     fn change_in_loss(
@@ -114,7 +115,7 @@ impl CMLossComputer for BinderCMLossComputer {
         let n_draws = cms.len_of(Axis(2));
         let sum1 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64) / 2.0;
         let to_index = to_label as usize + 1;
-		let mut sum2 = 0.0;
+        let mut sum2 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             sum2 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
@@ -693,10 +694,9 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
 ) -> SALSOResults {
     let start_time = Instant::now();
     let n_items = draws.n_items();
-    let max_size = match (p.max_size, p.max_size_as_rf) {
-        (0, _) => draws.max_clusters(),
-        (_, false) => p.max_size.min(draws.max_clusters()),
-        (_, true) => p.max_size,
+    let max_size = match p.max_size {
+        0 => draws.max_clusters(),
+        _ => p.max_size,
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy(max_size);
