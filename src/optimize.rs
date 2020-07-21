@@ -1814,7 +1814,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         },
         None => panic!("Unsupported loss method: code = {}", loss),
     };
-    let (max_size, strict_max_size) = if max_size < 0 {
+    let (max_size, max_size_as_rf) = if max_size < 0 {
         (LabelType::try_from(-max_size).unwrap(), true)
     } else {
         (LabelType::try_from(max_size).unwrap(), false)
@@ -1827,7 +1827,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
     let p = SALSOParameters {
         n_items,
         max_size,
-        max_size_as_rf: strict_max_size,
+        max_size_as_rf,
         max_scans,
         max_zealous_updates,
         n_runs,
