@@ -1332,21 +1332,25 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             };
             (partition, initialization_method)
         } else {
-            let mut partition = Partition::new(p.n_items);
-            let destiny = {
-                let mut v = Vec::with_capacity(p.n_items);
-                v.resize_with(p.n_items, || rng.gen_range(0, max_label + 1));
-                Partition::from(&v) // Already canonicalized
-            };
-            for i in 0..p.n_items {
-                let label_to_take = Some(destiny.label_of(i).unwrap() as LabelType);
-                label_of_empty_cluster(&mut partition, &mut computer, max_label);
-                micro_optimized_allocation(&mut partition, &mut computer, i, label_to_take);
-            }
-            (
-                partition,
-                InitializationMethod::SampleOne2MaxWithReplacement,
-            )
+            // Something about this code isn't working when max_label is small.
+            // Since pairwise similarity based computations aren't recommend, it may not be worth
+            // pursuing this further.  So, we'll just panic here and disable it in the R package.
+            panic!("Disabled because it's problematic.");
+            // let mut partition = Partition::new(p.n_items);
+            // let destiny = {
+            //     let mut v = Vec::with_capacity(p.n_items);
+            //     v.resize_with(p.n_items, || rng.gen_range(0, max_label + 1));
+            //     Partition::from(&v) // Already canonicalized
+            // };
+            // for i in 0..p.n_items {
+            //     let label_to_take = Some(destiny.label_of(i).unwrap() as LabelType);
+            //     label_of_empty_cluster(&mut partition, &mut computer, max_label);
+            //     micro_optimized_allocation(&mut partition, &mut computer, i, label_to_take);
+            // }
+            // (
+            //     partition,
+            //     InitializationMethod::SampleOne2MaxWithReplacement,
+            // )
         };
         // Sweetening scans
         let mut n_scans = 0;

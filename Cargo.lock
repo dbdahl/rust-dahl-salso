@@ -104,8 +104,7 @@ dependencies = [
 [[package]]
 name = "dahl-roxido"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39eaf1d2f9f84d590b95dd21dc6f7c1dfe1c873699eb53b14557262feef61c48"
+source = "git+https://dahl-git.byu.edu/dahl/rust-dahl-roxido.git#4ff36c8107f6f46332839f7775b97764ace934a7"
 dependencies = [
  "rand",
  "rand_isaac",
