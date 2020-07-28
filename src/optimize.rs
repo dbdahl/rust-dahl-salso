@@ -692,7 +692,6 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     seconds_target: f64,
     rng: &mut U,
 ) -> SALSOResults {
-    let start_time = Instant::now();
     let n_items = draws.n_items();
     let max_size = match p.max_size {
         0 => draws.max_clusters(),
@@ -700,6 +699,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     };
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy(max_size);
+    let start_time = Instant::now();
     for run_counter in 1..=p.n_runs {
         let mut loss_computer = loss_computer_factory();
         let singletons_initialization = rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
