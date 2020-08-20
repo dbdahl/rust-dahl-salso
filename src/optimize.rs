@@ -71,12 +71,11 @@ impl BinderCMLossComputer {
 impl CMLossComputer for BinderCMLossComputer {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let n_draws = cms.len_of(Axis(2));
-        let sum1 = self.a
-            * state
-                .occupied_clusters()
-                .iter()
-                .map(|i| BinderCMLossComputer::n_squared(state.size_of(*i)))
-                .sum::<f64>()
+        let sum1 = state
+            .occupied_clusters()
+            .iter()
+            .map(|i| BinderCMLossComputer::n_squared(state.size_of(*i)))
+            .sum::<f64>()
             * n_draws as f64;
         let mut sum2 = 0.0;
         let mut sum3 = 0.0;
@@ -86,15 +85,14 @@ impl CMLossComputer for BinderCMLossComputer {
                 if n > 0 {
                     sum2 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
-                        sum3 += 2.0
-                            * BinderCMLossComputer::n_squared(
+                        sum3 += BinderCMLossComputer::n_squared(
                                 cms[(*main_label as usize + 1, other_index, draw_index)],
                             );
                     }
                 }
             }
         }
-        (sum1 + sum2 - self.a * sum3)
+        (self.a * sum1 + sum2 - (1.0 + self.a) * sum3)
             / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
     }
 
@@ -113,14 +111,14 @@ impl CMLossComputer for BinderCMLossComputer {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let sum1 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64) / 2.0;
+        let sum1 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64);
         let to_index = to_label as usize + 1;
         let mut sum2 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             sum2 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
-        sum1 - self.a * sum2
+        self.a * sum1 - (1.0 + self.a) * sum2
     }
 }
 
@@ -291,12 +289,13 @@ impl CMLossComputer for OMARICMLossComputer {
 // Expectation of variation of information loss
 
 pub struct VICMLossComputer<'a> {
+    a: f64,
     cache: &'a Log2Cache,
 }
 
 impl<'a> VICMLossComputer<'a> {
-    pub fn new(cache: &'a Log2Cache) -> Self {
-        Self { cache }
+    pub fn new(a: f64, cache: &'a Log2Cache) -> Self {
+        Self { a, cache }
     }
 }
 
@@ -1481,7 +1480,7 @@ pub fn minimize_by_salso<T: Rng>(
     mut rng: &mut T,
 ) -> SALSOResults {
     let cache = Log2Cache::new(match loss_function {
-        LossFunction::VI | LossFunction::NVI | LossFunction::ID | LossFunction::NID => p.n_items,
+        LossFunction::VI(_) | LossFunction::NVI | LossFunction::ID | LossFunction::NID => p.n_items,
         _ => 0,
     });
     let result = if n_cores == 1 {
@@ -1512,8 +1511,8 @@ pub fn minimize_by_salso<T: Rng>(
                 seconds,
                 rng,
             ),
-            LossFunction::VI => minimize_once_by_salso_v2(
-                Box::new(|| VICMLossComputer::new(&cache)),
+            LossFunction::VI(a) => minimize_once_by_salso_v2(
+                Box::new(|| VICMLossComputer::new(a, &cache)),
                 pdi.draws(),
                 p,
                 seconds,
@@ -1610,8 +1609,8 @@ pub fn minimize_by_salso<T: Rng>(
                             seconds,
                             &mut child_rng,
                         ),
-                        LossFunction::VI => minimize_once_by_salso_v2(
-                            Box::new(|| VICMLossComputer::new(cache_ref)),
+                        LossFunction::VI(a) => minimize_once_by_salso_v2(
+                            Box::new(|| VICMLossComputer::new(a, cache_ref)),
                             pdi.draws(),
                             &p,
                             seconds,
@@ -1750,12 +1749,12 @@ mod tests_optimize {
             max_scans: 10,
             max_zealous_updates: 10,
             n_runs: 100,
-            prob_sequential_allocation: 0.25,
+            prob_sequential_allocation: 1.0,
             prob_singletons_initialization: 0.5,
         };
         minimize_by_salso(
             PartitionDistributionInformation::PairwiseSimilarityMatrix(psm_view),
-            LossFunction::VIlb,
+            LossFunction::BinderPSM,
             &p,
             5.0,
             1,
@@ -1804,7 +1803,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
         Some(loss_function) => match loss_function {
             LossFunction::BinderDraws(_)
             | LossFunction::OneMinusARI
-            | LossFunction::VI
+            | LossFunction::VI(_)
             | LossFunction::NVI
             | LossFunction::ID
             | LossFunction::NID => (
@@ -1870,7 +1869,7 @@ pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
             LossFunction::BinderPSM => binder_single_kernel,
             LossFunction::OneMinusARI => panic!("No implementation for omARI."),
             LossFunction::OneMinusARIapprox => omariapprox_single,
-            LossFunction::VI => panic!("No implementation for VI."),
+            LossFunction::VI(_) => panic!("No implementation for VI."),
             LossFunction::VIlb => vilb_single_kernel,
             LossFunction::NVI => panic!("No implementation for NVI."),
             LossFunction::ID => panic!("No implementation for ID."),

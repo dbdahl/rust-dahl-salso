@@ -269,10 +269,10 @@ pub unsafe extern "C" fn dahl_salso__expected_loss(
             results,
         ),
         Some(LossFunction::OneMinusARIapprox) => omariapprox_multiple(&partitions, &psm, results),
-        Some(LossFunction::VI) => {
+        Some(LossFunction::VI(a)) => {
             let cache = Log2Cache::new(ni);
             compute_loss_multiple(
-                Box::new(|| VICMLossComputer::new(&cache)),
+                Box::new(|| VICMLossComputer::new(a, &cache)),
                 &partitions,
                 &draws,
                 results,
@@ -372,7 +372,7 @@ mod tests_loss {
         }
         let cache = Log2Cache::new(n_items);
         compute_loss_multiple(
-            Box::new(|| VICMLossComputer::new(&cache)),
+            Box::new(|| VICMLossComputer::new(2.0, &cache)),
             samples_view,
             samples_view,
             &mut results[..],
