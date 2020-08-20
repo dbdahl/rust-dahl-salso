@@ -86,13 +86,13 @@ impl CMLossComputer for BinderCMLossComputer {
                     sum2 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
                         sum3 += BinderCMLossComputer::n_squared(
-                                cms[(*main_label as usize + 1, other_index, draw_index)],
-                            );
+                            cms[(*main_label as usize + 1, other_index, draw_index)],
+                        );
                     }
                 }
             }
         }
-        (self.a * sum1 + sum2 - (1.0 + self.a) * sum3)
+        (sum1 + self.a * sum2 - (1.0 + self.a) * sum3)
             / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
     }
 
@@ -118,7 +118,7 @@ impl CMLossComputer for BinderCMLossComputer {
             let other_index = draws.label(draw_index, item_index) as usize;
             sum2 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
-        self.a * sum1 - (1.0 + self.a) * sum2
+        sum1 - (1.0 + self.a) * sum2
     }
 }
 
