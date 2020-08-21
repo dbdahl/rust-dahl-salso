@@ -313,9 +313,9 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
             for other_index in 0..cms.len_of(Axis(1)) {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
-                    vi += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
+                    vi += self.a * self.cache.nlog2n(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
-                        vi -= 2.0
+                        vi -= (1.0 + self.a)
                             * self
                                 .cache
                                 .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
@@ -345,13 +345,12 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
         let mut sum = (n_draws as f64)
             * self
                 .cache
-                .nlog2n_difference(state.size_of(to_label) - offset)
-            / 2.0;
+                .nlog2n_difference(state.size_of(to_label) - offset);
         let to_index = to_label as usize + 1;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             let n12 = cms[(to_index, other_index, draw_index)] - offset;
-            sum -= self.cache.nlog2n_difference(n12);
+            sum -= (1.0 + self.a) * self.cache.nlog2n_difference(n12);
         }
         sum
     }
