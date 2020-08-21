@@ -71,19 +71,19 @@ impl BinderCMLossComputer {
 impl CMLossComputer for BinderCMLossComputer {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let n_draws = cms.len_of(Axis(2));
-        let sum1 = state
+        let sum2 = state
             .occupied_clusters()
             .iter()
             .map(|i| BinderCMLossComputer::n_squared(state.size_of(*i)))
             .sum::<f64>()
             * n_draws as f64;
-        let mut sum2 = 0.0;
+        let mut sum1 = 0.0;
         let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             for other_index in 0..cms.len_of(Axis(1)) {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
-                    sum2 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
+                    sum1 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
                         sum3 += BinderCMLossComputer::n_squared(
                             cms[(*main_label as usize + 1, other_index, draw_index)],
@@ -92,7 +92,7 @@ impl CMLossComputer for BinderCMLossComputer {
                 }
             }
         }
-        (sum1 + self.a * sum2 - (1.0 + self.a) * sum3)
+        (self.a * sum1 + sum2 - (self.a + 1.0) * sum3)
             / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
     }
 
@@ -111,14 +111,14 @@ impl CMLossComputer for BinderCMLossComputer {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let sum1 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64);
+        let sum2 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64);
         let to_index = to_label as usize + 1;
-        let mut sum2 = 0.0;
+        let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            sum2 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
+            sum3 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
-        sum1 - (1.0 + self.a) * sum2
+        sum2 - (self.a + 1.0) * sum3
     }
 }
 
@@ -318,8 +318,8 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                     sum1 += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
                         sum3 += self
-                                .cache
-                                .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
+                            .cache
+                            .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
                     }
                 }
             }
@@ -343,18 +343,18 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let mut sum = (n_draws as f64)
+        let sum2 = (n_draws as f64)
             * self
                 .cache
                 .nlog2n_difference(state.size_of(to_label) - offset);
         let to_index = to_label as usize + 1;
-        let a_plus_1 = self.a + 1.0;
+        let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             let n12 = cms[(to_index, other_index, draw_index)] - offset;
-            sum -= a_plus_1 * self.cache.nlog2n_difference(n12);
+            sum3 += self.cache.nlog2n_difference(n12);
         }
-        sum
+        sum2 - (self.a + 1.0) * sum3
     }
 }
 
