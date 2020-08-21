@@ -306,23 +306,24 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
             .iter()
             .map(|i| self.cache.nlog2n(state.size_of(*i)))
             .sum();
+        let a_plus_1 = self.a + 1.0;
         let n_draws = cms.len_of(Axis(2));
         let mut sum = 0.0;
         for draw_index in 0..n_draws {
-            let mut vi = 0.0;
+            let mut sum1 = 0.0;
+            let mut sum3 = 0.0;
             for other_index in 0..cms.len_of(Axis(1)) {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
-                    vi += self.a * self.cache.nlog2n(cms[(0, other_index, draw_index)]);
+                    sum1 += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
-                        vi -= (1.0 + self.a)
-                            * self
+                        sum3 += self
                                 .cache
                                 .nlog2n(cms[(*main_label as usize + 1, other_index, draw_index)]);
                     }
                 }
             }
-            sum += (vi + sum2) / (state.n_items() as f64);
+            sum += (self.a * sum1 + sum2 - a_plus_1 * sum3) / (state.n_items() as f64);
         }
         sum / (n_draws as f64)
     }
@@ -347,10 +348,11 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                 .cache
                 .nlog2n_difference(state.size_of(to_label) - offset);
         let to_index = to_label as usize + 1;
+        let a_plus_1 = self.a + 1.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             let n12 = cms[(to_index, other_index, draw_index)] - offset;
-            sum -= (1.0 + self.a) * self.cache.nlog2n_difference(n12);
+            sum -= a_plus_1 * self.cache.nlog2n_difference(n12);
         }
         sum
     }
