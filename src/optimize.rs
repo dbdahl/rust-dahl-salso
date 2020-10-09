@@ -2,13 +2,13 @@ extern crate ndarray;
 extern crate num_cpus;
 extern crate rand;
 
-use self::ndarray::{Array2, Array3, Axis};
 use crate::clustering::{Clusterings, WorkingClustering};
 use crate::log2cache::Log2Cache;
 use crate::loss::*;
 use crate::*;
 use dahl_partition::*;
 use dahl_roxido::mk_rng_isaac;
+use ndarray::{Array2, Array3, Axis};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
