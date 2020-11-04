@@ -1,6 +1,6 @@
 [package]
 name = "dahl-salso"
-version = "0.4.0"
+version = "0.5.0"
 authors = ["David B. Dahl <dahl@stat.byu.edu>"]
 edition = "2018"
 description = "An implement of the sequentially-allocated latent structure optimization (SALSO) to find a partition that minimizes various loss functions. The SALSO method was presented at the workshop 'Bayesian Nonparametric Inference: Dependence Structures and their Applications' in Oaxaca, Mexico on December 6, 2017."
@@ -8,15 +8,15 @@ homepage = "https://dahl.byu.edu"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-# dahl-partition = "0.5.1"
-dahl-partition = { git="https://dahl-git.byu.edu/dahl/rust-dahl-partition.git" }
+dahl-partition = "0.5.1"
+# dahl-partition = { git="https://dahl-git.byu.edu/dahl/rust-dahl-partition.git" }
 # dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
-# dahl-roxido = "0.2.0"
-dahl-roxido = { git="https://dahl-git.byu.edu/dahl/rust-dahl-roxido.git" }
+dahl-roxido = "0.2.0"
+# dahl-roxido = { git="https://dahl-git.byu.edu/dahl/rust-dahl-roxido.git" }
 # dahl-roxido = { path="/home/dahl/docs/devel/rust-dahl-roxido" }
 rand = "0.7.3"
 rand_isaac = "0.2.0"
-crossbeam = "0.7.3"
+crossbeam = "0.8.0"
 ndarray = "0.13.1"
 num_cpus = "1.13.0"
-approx = "0.3.2"
+approx = "0.4.0"
