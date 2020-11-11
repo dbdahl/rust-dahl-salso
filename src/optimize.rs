@@ -1299,7 +1299,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
 ) -> SALSOResults {
     let start_time = Instant::now();
     let max_label = if p.max_size == 0 {
-        LabelType::MAX - 1
+        MAX_LABEL
     } else {
         p.max_size.max(1) - 1
     };

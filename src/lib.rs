@@ -13,8 +13,9 @@ pub mod psm;
 use crate::clustering::Clusterings;
 use dahl_partition::*;
 
-pub type LabelType = u16; // u8; // usize;
 pub type CountType = u32; // u16; // usize;
+pub type LabelType = u16; // u8; // usize;
+const MAX_LABEL: u16 = std::u16::MAX - 1; // Should match LabelType;
 
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
