@@ -52,7 +52,7 @@ pub enum LossFunction {
 }
 
 impl LossFunction {
-    fn from_code(x: i32, a: f64) -> Option<LossFunction> {
+    pub fn from_code(x: i32, a: f64) -> Option<LossFunction> {
         match x {
             0 => Some(LossFunction::BinderDraws(a)),
             1 => Some(LossFunction::BinderPSM),

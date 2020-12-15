@@ -5,6 +5,7 @@ use ndarray::Array3;
 use rand::Rng;
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
 pub struct Clusterings {
     n_clusterings: usize,
     n_items: usize,

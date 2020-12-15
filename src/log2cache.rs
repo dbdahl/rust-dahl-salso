@@ -3,6 +3,7 @@ extern crate rand;
 
 use crate::*;
 
+#[derive(Debug, Clone)]
 pub struct Log2Cache {
     log2n: Vec<f64>,
     nlog2n: Vec<f64>,
@@ -48,4 +49,3 @@ impl Log2Cache {
         unsafe { *self.nlog2n_difference.get_unchecked(n as usize) }
     }
 }
-
