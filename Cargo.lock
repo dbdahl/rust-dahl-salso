@@ -100,6 +100,7 @@ dependencies = [
 [[package]]
 name = "dahl-partition"
 version = "0.5.2"
+source = "git+https://dahl-git.byu.edu/dahl/rust-dahl-partition.git#232beeefebfbb9de25cd146f617941796e5fd92f"
 dependencies = [
  "rand",
 ]
@@ -107,6 +108,7 @@ dependencies = [
 [[package]]
 name = "dahl-roxido"
 version = "0.3.0"
+source = "git+https://dahl-git.byu.edu/dahl/rust-dahl-roxido.git#d7b65605d4c55c837be0be7a7626e8f7834e6027"
 dependencies = [
  "rand",
  "rand_isaac",
@@ -114,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "dahl-salso"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "approx",
  "crossbeam",
