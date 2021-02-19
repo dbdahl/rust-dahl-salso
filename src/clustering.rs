@@ -149,7 +149,7 @@ impl WorkingClustering {
 
     fn sample_1tok<T: Rng>(n_items: usize, max_clusters: LabelType, rng: &mut T) -> Vec<LabelType> {
         let mut v = Vec::with_capacity(n_items);
-        v.resize_with(n_items, || rng.gen_range(0, max_clusters));
+        v.resize_with(n_items, || rng.gen_range(0..max_clusters));
         v
     }
 

@@ -351,8 +351,9 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
         let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
-            let n12 = cms[(to_index, other_index, draw_index)] - offset;
-            sum3 += self.cache.nlog2n_difference(n12);
+            sum3 += self
+                .cache
+                .nlog2n_difference(cms[(to_index, other_index, draw_index)] - offset);
         }
         sum2 - (self.a + 1.0) * sum3
     }
@@ -702,9 +703,9 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     let start_time = Instant::now();
     for run_counter in 1..=p.n_runs {
         let mut loss_computer = loss_computer_factory();
-        let singletons_initialization = rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
+        let singletons_initialization = rng.gen_range(0.0..1.0) < p.prob_singletons_initialization;
         let (mut state, mut cms, initialization_method) =
-            if rng.gen_range(0.0, 1.0) < p.prob_sequential_allocation {
+            if rng.gen_range(0.0..1.0) < p.prob_sequential_allocation {
                 let mut state = WorkingClustering::empty(n_items, max_size);
                 let mut cms = Array3::<CountType>::zeros((
                     max_size as usize + 1,
@@ -849,7 +850,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             let projected_seconds_if_another = (rc + 1.0) * seconds_per_run;
             if projected_seconds_if_another >= seconds_target {
                 let prob_stop = (projected_seconds_if_another - seconds_target) / seconds_per_run;
-                if rng.gen_range(0.0, 1.0) < prob_stop {
+                if rng.gen_range(0.0..1.0) < prob_stop {
                     return SALSOResults {
                         n_runs: run_counter,
                         seconds,
@@ -1308,13 +1309,13 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     let mut run_counter = 0;
     while run_counter < p.n_runs {
         let mut computer = computer_factory();
-        let (mut partition, initialization_method) = if rng.gen_range(0.0, 1.0)
+        let (mut partition, initialization_method) = if rng.gen_range(0.0..1.0)
             < p.prob_sequential_allocation
         {
             let mut partition = Partition::new(p.n_items);
             permutation.shuffle(rng);
             let singletons_initialization =
-                rng.gen_range(0.0, 1.0) < p.prob_singletons_initialization;
+                rng.gen_range(0.0..1.0) < p.prob_singletons_initialization;
             // Sequential allocation
             for i in 0..p.n_items {
                 let ii = unsafe { *permutation.get_unchecked(i) };
@@ -1389,7 +1390,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             let projected_seconds_if_another = (rc + 1.0) * seconds_per_run;
             if projected_seconds_if_another >= seconds_target {
                 let prob_stop = (projected_seconds_if_another - seconds_target) / seconds_per_run;
-                if rng.gen_range(0.0, 1.0) < prob_stop {
+                if rng.gen_range(0.0..1.0) < prob_stop {
                     return SALSOResults {
                         n_runs: run_counter,
                         seconds,
