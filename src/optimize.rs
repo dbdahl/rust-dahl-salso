@@ -14,7 +14,6 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use rand_isaac::IsaacRng;
 use std::convert::TryFrom;
-use std::f64;
 use std::slice;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -208,14 +207,17 @@ impl CMLossComputer for OMARICMLossComputer {
         };
         let to_index = to_label as usize + 1;
         let mut n = self.n;
-        let from_index = if from_label_option.is_some() {
-            if offset == 0 {
-                sum2 -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
+        let from_index = match from_label_option {
+            Some(from_label) => {
+                if offset == 0 {
+                    sum2 -= 2.0 * (state.size_of(from_label) - 1) as f64;
+                }
+                from_label as usize + 1
             }
-            from_label_option.unwrap() as usize + 1
-        } else {
-            n += 1;
-            0
+            None => {
+                n += 1;
+                0
+            }
         };
         let sum2_div_denom = sum2 / OMARICMLossComputer::n_choose_2_times_2(n);
         let mut sum = 0.0;
@@ -255,19 +257,25 @@ impl CMLossComputer for OMARICMLossComputer {
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) {
-        let to_index = if to_label_option.is_some() {
-            self.sum += 2.0 * state.size_of(to_label_option.unwrap()) as f64;
-            to_label_option.unwrap() as usize + 1
-        } else {
-            self.n -= 1;
-            0
+        let to_index = match to_label_option {
+            Some(to_label) => {
+                self.sum += 2.0 * state.size_of(to_label) as f64;
+                to_label as usize + 1
+            }
+            None => {
+                self.n -= 1;
+                0
+            }
         };
-        let from_index = if from_label_option.is_some() {
-            self.sum -= 2.0 * (state.size_of(from_label_option.unwrap()) - 1) as f64;
-            from_label_option.unwrap() as usize + 1
-        } else {
-            self.n += 1;
-            0
+        let from_index = match from_label_option {
+            Some(from_label) => {
+                self.sum -= 2.0 * (state.size_of(from_label) - 1) as f64;
+                from_label as usize + 1
+            }
+            None => {
+                self.n += 1;
+                0
+            }
         };
         let n_draws = draws.n_clusterings();
         for draw_index in 0..n_draws {
@@ -450,15 +458,14 @@ where
             self.sum
         };
         let to_index = to_label as usize + 1;
-        let (n, from_index) = if from_label_option.is_some() {
-            if offset == 0 {
-                v -= self
-                    .cache
-                    .nlog2n_difference(state.size_of(from_label_option.unwrap()) - 1);
+        let (n, from_index) = match from_label_option {
+            Some(from_label) => {
+                if offset == 0 {
+                    v -= self.cache.nlog2n_difference(state.size_of(from_label) - 1);
+                }
+                (self.n, from_label as usize + 1)
             }
-            (self.n, from_label_option.unwrap() as usize + 1)
-        } else {
-            (self.n + 1, 0)
+            None => (self.n + 1, 0),
         };
         let ni = n as f64;
         let nlog2n = ni * ni.log2();
@@ -497,23 +504,25 @@ where
         cms: &Array3<CountType>,
         draws: &Clusterings,
     ) {
-        let to_index = if to_label_option.is_some() {
-            self.sum += self
-                .cache
-                .nlog2n_difference(state.size_of(to_label_option.unwrap()));
-            to_label_option.unwrap() as usize + 1
-        } else {
-            self.n -= 1;
-            0
+        let to_index = match to_label_option {
+            Some(to_label) => {
+                self.sum += self.cache.nlog2n_difference(state.size_of(to_label));
+                to_label as usize + 1
+            }
+            None => {
+                self.n -= 1;
+                0
+            }
         };
-        let from_index = if from_label_option.is_some() {
-            self.sum -= self
-                .cache
-                .nlog2n_difference(state.size_of(from_label_option.unwrap()) - 1);
-            from_label_option.unwrap() as usize + 1
-        } else {
-            self.n += 1;
-            0
+        let from_index = match from_label_option {
+            Some(from_label) => {
+                self.sum -= self.cache.nlog2n_difference(state.size_of(from_label) - 1);
+                from_label as usize + 1
+            }
+            None => {
+                self.n += 1;
+                0
+            }
         };
         let n_draws = draws.n_clusterings();
         for draw_index in 0..n_draws {
@@ -613,7 +622,7 @@ fn allocation_scan<T: CMLossComputer>(
     singletons_initialization: bool,
     state: &mut WorkingClustering,
     cms: &mut Array3<CountType>,
-    permutation: &Vec<usize>,
+    permutation: &[usize],
     loss_computer: &mut T,
     draws: &Clusterings,
 ) -> bool {
@@ -626,10 +635,9 @@ fn allocation_scan<T: CMLossComputer>(
             true => Some(state.get(item_index)),
             false => None,
         };
-        let to_label =
-            if !sweetening_scan && singletons_initialization && label_of_empty_cluster.is_some() {
-                label_of_empty_cluster.unwrap()
-            } else {
+        let to_label = match label_of_empty_cluster {
+            Some(loec) if !sweetening_scan && singletons_initialization => loec,
+            Some(_) | None => {
                 let iter = state
                     .occupied_clusters()
                     .iter()
@@ -648,7 +656,8 @@ fn allocation_scan<T: CMLossComputer>(
                         )
                     });
                 find_label_of_minimum(iter)
-            };
+            }
+        };
         if !sweetening_scan {
             state.assign(item_index, to_label, loss_computer, cms, draws);
             if chosen_label_option.is_none() {
@@ -814,10 +823,10 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                     } else {
                         // Undo changes
                         if state_changed {
-                            for item_index in 0..labels_for_undo.len() {
+                            for (item_index, new_label) in labels_for_undo.iter().enumerate() {
                                 state.reassign(
                                     item_index,
-                                    labels_for_undo[item_index],
+                                    *new_label,
                                     &mut loss_computer,
                                     &mut cms,
                                     draws,
@@ -1258,13 +1267,11 @@ fn label_of_empty_cluster<U: GeneralLossComputer>(
         Some(last) => {
             if last.is_empty() {
                 Some(partition.n_subsets() as LabelType - 1)
+            } else if partition.n_subsets() <= max_label as usize {
+                computer.new_subset(partition);
+                Some(partition.n_subsets() as LabelType - 1)
             } else {
-                if partition.n_subsets() <= max_label as usize {
-                    computer.new_subset(partition);
-                    Some(partition.n_subsets() as LabelType - 1)
-                } else {
-                    None
-                }
+                None
             }
         }
     }
@@ -1279,14 +1286,15 @@ fn micro_optimized_allocation<U: GeneralLossComputer>(
     let max_label = partition.n_subsets() as LabelType - 1;
     let iter = (0..=max_label).map(|subset_index| {
         let value = computer.speculative_add(partition, i, subset_index as LabelType);
-        if label_to_take.is_some() {
-            if subset_index == label_to_take.unwrap() {
-                (subset_index, f64::NEG_INFINITY)
-            } else {
-                (subset_index, f64::INFINITY)
+        match label_to_take {
+            Some(label_to_take) => {
+                if subset_index == label_to_take {
+                    (subset_index, f64::NEG_INFINITY)
+                } else {
+                    (subset_index, f64::INFINITY)
+                }
             }
-        } else {
-            (subset_index, value)
+            None => (subset_index, value),
         }
     });
     let subset_index = find_label_of_minimum(iter);
@@ -1412,7 +1420,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
 
 // Common implementation for SALSO.
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct SALSOParameters {
     n_items: usize,
     max_size: LabelType,
@@ -1586,6 +1594,7 @@ pub fn minimize_by_salso<T: Rng>(
             for _ in 0..n_cores {
                 let tx = mpsc::Sender::clone(&tx);
                 let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
+                let p = p.clone();
                 s.spawn(move |_| {
                     let result = match loss_function {
                         LossFunction::BinderDraws(a) => minimize_once_by_salso_v2(

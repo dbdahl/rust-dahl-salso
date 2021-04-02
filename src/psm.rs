@@ -41,7 +41,7 @@ fn engine(
     n_cores: u32,
     partitions: &PartitionsHolderBorrower,
     psm: &mut SquareMatrixBorrower,
-) -> () {
+) {
     if n_cores == 1 {
         engine2(n_partitions, n_items, None, partitions, psm);
     } else {
@@ -88,7 +88,7 @@ fn engine2(
     range: Option<std::ops::Range<usize>>,
     partitions: &PartitionsHolderBorrower,
     psm: &mut SquareMatrixBorrower,
-) -> () {
+) {
     let npf = n_partitions as f64;
     let indices = range.unwrap_or(0..n_items);
     for j in indices {
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn dahl_salso__psm(
     n_cores: i32,
     partitions_ptr: *mut i32,
     psm_ptr: *mut f64,
-) -> () {
+) {
     let np = n_partitions as usize;
     let ni = n_items as usize;
     let partitions = PartitionsHolderBorrower::from_ptr(partitions_ptr, np, ni, true);

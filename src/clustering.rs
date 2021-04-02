@@ -192,17 +192,15 @@ impl WorkingClustering {
     pub fn label_of_empty_cluster(&mut self) -> Option<LabelType> {
         if self.occupied_clusters.len() >= self.max_clusters as usize {
             None
+        } else if self.sizes[self.potentially_empty_label as usize] == 0 {
+            Some(self.potentially_empty_label)
         } else {
-            if self.sizes[self.potentially_empty_label as usize] == 0 {
-                Some(self.potentially_empty_label)
-            } else {
-                match self.sizes.iter().position(|&size| size == 0) {
-                    Some(index) => {
-                        self.potentially_empty_label = index as LabelType;
-                        Some(self.potentially_empty_label)
-                    }
-                    None => None,
+            match self.sizes.iter().position(|&size| size == 0) {
+                Some(index) => {
+                    self.potentially_empty_label = index as LabelType;
+                    Some(self.potentially_empty_label)
                 }
+                None => None,
             }
         }
     }

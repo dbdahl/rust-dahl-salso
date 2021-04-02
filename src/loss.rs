@@ -166,8 +166,8 @@ pub fn vilb_single_kernel_for_partial_partition(
         }
         let mut s1 = 0u32;
         let mut s2 = 0.0;
-        for j in 0..ni {
-            if labels[j].is_none() {
+        for (j, item) in labels.iter().enumerate() {
+            if item.is_none() {
                 continue;
             }
             if partition.label_of(i) == partition.label_of(j) {
