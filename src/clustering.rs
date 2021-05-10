@@ -22,7 +22,7 @@ impl Clusterings {
         n_clusters: Vec<LabelType>,
     ) -> Self {
         assert_eq!(n_clusterings * n_items, labels.len());
-        assert_eq!(n_clusters.len(), labels.len());
+        assert_eq!(n_clusterings, n_clusters.len());
         let max_clusters = *n_clusters.iter().max().unwrap();
         Self {
             n_clusterings,
