@@ -1422,26 +1422,26 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
 
 #[derive(Debug, Clone)]
 pub struct SALSOParameters {
-    n_items: usize,
-    max_size: LabelType,
-    max_size_as_rf: bool,
-    max_scans: u32,
-    max_zealous_updates: u32,
-    n_runs: u32,
-    prob_sequential_allocation: f64,
-    prob_singletons_initialization: f64,
+    pub n_items: usize,
+    pub max_size: LabelType,
+    pub max_size_as_rf: bool,
+    pub max_scans: u32,
+    pub max_zealous_updates: u32,
+    pub n_runs: u32,
+    pub prob_sequential_allocation: f64,
+    pub prob_singletons_initialization: f64,
 }
 
 pub struct SALSOResults {
-    clustering: Vec<usize>,
-    expected_loss: f64,
-    n_scans: u32,
-    n_zealous_accepts: u32,
-    n_zealous_attempts: u32,
-    initialization_method: InitializationMethod,
-    n_runs: u32,
-    max_size: LabelType,
-    seconds: f64,
+    pub clustering: Vec<usize>,
+    pub expected_loss: f64,
+    pub n_scans: u32,
+    pub n_zealous_accepts: u32,
+    pub n_zealous_attempts: u32,
+    pub initialization_method: InitializationMethod,
+    pub n_runs: u32,
+    pub max_size: LabelType,
+    pub seconds: f64,
 }
 
 impl SALSOResults {

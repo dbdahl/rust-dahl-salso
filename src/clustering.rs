@@ -15,6 +15,24 @@ pub struct Clusterings {
 }
 
 impl Clusterings {
+    pub fn unvalidated(
+        n_clusterings: usize,
+        n_items: usize,
+        labels: Vec<LabelType>,
+        n_clusters: Vec<LabelType>,
+    ) -> Self {
+        assert_eq!(n_clusterings * n_items, labels.len());
+        assert_eq!(n_clusters.len(), labels.len());
+        let max_clusters = *n_clusters.iter().max().unwrap();
+        Self {
+            n_clusterings,
+            n_items,
+            labels,
+            n_clusters,
+            max_clusters,
+        }
+    }
+
     pub fn from_i32_column_major_order(original_labels: &[i32], n_items: usize) -> Self {
         let n_clusterings = original_labels.len() / n_items;
         let mut labels = Vec::with_capacity(n_clusterings * n_items);
