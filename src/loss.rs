@@ -1,14 +1,8 @@
 use dahl_partition::*;
 
 use crate::clustering::{Clusterings, WorkingClustering};
-use crate::log2cache::Log2Cache;
-use crate::optimize::{
-    BinderCMLossComputer, CMLossComputer, GeneralInformationBasedCMLossComputer,
-    IDInformationBasedLoss, NIDInformationBasedLoss, NVIInformationBasedLoss, OMARICMLossComputer,
-    VICMLossComputer,
-};
+use crate::optimize::CMLossComputer;
 use crate::*;
-use std::slice;
 
 // Expectation of Binder loss
 
@@ -232,105 +226,11 @@ pub fn compute_loss_multiple<'a, T: CMLossComputer>(
     }
 }
 
-// API for R
-
-#[no_mangle]
-pub unsafe extern "C" fn dahl_salso__expected_loss(
-    n_partitions: i32,
-    n_items: i32,
-    partition_ptr: *mut i32,
-    n_draws: i32,
-    draws_ptr: *mut i32,
-    psm_ptr: *mut f64,
-    loss: i32,
-    a: f64,
-    results_ptr: *mut f64,
-) {
-    let np = n_partitions as usize;
-    let ni = n_items as usize;
-    let nd = n_draws as usize;
-    let partitions = PartitionsHolderBorrower::from_ptr(partition_ptr, np, ni, true);
-    let draws = PartitionsHolderBorrower::from_ptr(draws_ptr, nd, ni, true);
-    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
-    let results = slice::from_raw_parts_mut(results_ptr, np);
-    let loss_function = LossFunction::from_code(loss, a);
-    match loss_function {
-        Some(LossFunction::BinderDraws(a)) => compute_loss_multiple(
-            Box::new(|| BinderCMLossComputer::new(a)),
-            &partitions,
-            &draws,
-            results,
-        ),
-        Some(LossFunction::BinderPSM) => binder_multiple(&partitions, &psm, results),
-        Some(LossFunction::OneMinusARI) => compute_loss_multiple(
-            Box::new(|| OMARICMLossComputer::new(nd)),
-            &partitions,
-            &draws,
-            results,
-        ),
-        Some(LossFunction::OneMinusARIapprox) => omariapprox_multiple(&partitions, &psm, results),
-        Some(LossFunction::VI(a)) => {
-            let cache = Log2Cache::new(ni);
-            compute_loss_multiple(
-                Box::new(|| VICMLossComputer::new(a, &cache)),
-                &partitions,
-                &draws,
-                results,
-            )
-        }
-        Some(LossFunction::VIlb) => vilb_multiple(&partitions, &psm, results),
-        Some(LossFunction::NVI) => {
-            let cache = Log2Cache::new(ni);
-            compute_loss_multiple(
-                Box::new(|| {
-                    GeneralInformationBasedCMLossComputer::new(
-                        nd,
-                        &cache,
-                        NVIInformationBasedLoss {},
-                    )
-                }),
-                &partitions,
-                &draws,
-                results,
-            )
-        }
-        Some(LossFunction::ID) => {
-            let cache = Log2Cache::new(ni);
-            compute_loss_multiple(
-                Box::new(|| {
-                    GeneralInformationBasedCMLossComputer::new(
-                        nd,
-                        &cache,
-                        IDInformationBasedLoss {},
-                    )
-                }),
-                &partitions,
-                &draws,
-                results,
-            )
-        }
-        Some(LossFunction::NID) => {
-            let cache = Log2Cache::new(ni);
-            compute_loss_multiple(
-                Box::new(|| {
-                    GeneralInformationBasedCMLossComputer::new(
-                        nd,
-                        &cache,
-                        NIDInformationBasedLoss {},
-                    )
-                }),
-                &partitions,
-                &draws,
-                results,
-            )
-        }
-        None => panic!("Unsupported loss method: {}", loss),
-    };
-}
-
 #[cfg(test)]
 mod tests_loss {
     use super::*;
+    use crate::log2cache::Log2Cache;
+    use crate::optimize::{OMARICMLossComputer, VICMLossComputer};
 
     #[test]
     fn test_computations() {

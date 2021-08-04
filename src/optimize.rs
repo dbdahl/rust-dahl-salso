@@ -1,20 +1,13 @@
-extern crate ndarray;
-extern crate num_cpus;
-extern crate rand;
-
 use crate::clustering::{Clusterings, WorkingClustering};
 use crate::log2cache::Log2Cache;
 use crate::loss::*;
 use crate::*;
 use dahl_partition::*;
-use dahl_roxido::mk_rng_isaac;
 use ndarray::{Array2, Array3, Axis};
 use rand::distributions::{Distribution, Uniform};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
-use rand_isaac::IsaacRng;
-use std::convert::TryFrom;
-use std::slice;
+use rand_pcg::Pcg64Mcg;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -649,9 +642,9 @@ fn allocation_scan<T: CMLossComputer>(
                                 item_index,
                                 *to_label,
                                 from_label_option,
-                                &state,
-                                &cms,
-                                &draws,
+                                state,
+                                cms,
+                                draws,
                             ),
                         )
                     });
@@ -675,6 +668,7 @@ fn allocation_scan<T: CMLossComputer>(
     state_changed
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sweetening_scans<T: CMLossComputer, U: Rng>(
     state: &mut WorkingClustering,
     cms: &mut Array3<CountType>,
@@ -762,7 +756,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
             &mut loss_computer,
             &mut scan_counter,
             draws,
-            &p,
+            p,
             rng,
         );
         let mut expected_loss = loss_computer.compute_loss(&state, &cms);
@@ -812,7 +806,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
                         &mut loss_computer,
                         &mut scan_counter,
                         draws,
-                        &p,
+                        p,
                         rng,
                     );
                     let expected_loss_of_candidate = loss_computer.compute_loss(&state, &cms);
@@ -1445,6 +1439,7 @@ pub struct SALSOResults {
 }
 
 impl SALSOResults {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         clustering: Vec<usize>,
         expected_loss: f64,
@@ -1593,7 +1588,7 @@ pub fn minimize_by_salso<T: Rng>(
         crossbeam::scope(|s| {
             for _ in 0..n_cores {
                 let tx = mpsc::Sender::clone(&tx);
-                let mut child_rng = IsaacRng::from_rng(&mut rng).unwrap();
+                let mut child_rng = Pcg64Mcg::from_rng(&mut rng).unwrap();
                 let p = p.clone();
                 s.spawn(move |_| {
                     let result = match loss_function {
@@ -1748,7 +1743,7 @@ pub fn minimize_by_enumeration(
 
 #[cfg(test)]
 mod tests_optimize {
-    use super::rand::thread_rng;
+    use rand::thread_rng;
     use super::*;
 
     #[test]
@@ -1774,126 +1769,5 @@ mod tests_optimize {
             1,
             &mut thread_rng(),
         );
-    }
-}
-
-// API for R
-
-#[no_mangle]
-pub unsafe extern "C" fn dahl_salso__minimize_by_salso(
-    n_items: i32,
-    n_draws: i32,
-    draws_ptr: *mut i32,
-    psm_ptr: *mut f64,
-    loss: i32,
-    a: f64,
-    max_size: i32,
-    n_runs: i32,
-    seconds: f64,
-    max_scans: i32,
-    max_zealous_updates: i32,
-    prob_sequential_allocation: f64,
-    prob_singletons_initialization: f64,
-    n_cores: i32,
-    results_labels_ptr: *mut i32,
-    results_expected_loss_ptr: *mut f64,
-    results_n_scans_ptr: *mut i32,
-    results_n_zealous_accepts_ptr: *mut i32,
-    results_n_zealous_attempts_ptr: *mut i32,
-    results_n_runs_ptr: *mut i32,
-    results_max_size_ptr: *mut i32,
-    results_initialization_method_ptr: *mut i32,
-    results_seconds_ptr: *mut f64,
-    seed_ptr: *const i32, // Assumed length is 32
-) {
-    let n_items = usize::try_from(n_items).unwrap();
-    let nd = usize::try_from(n_draws).unwrap();
-    let draws = Clusterings::from_i32_column_major_order(
-        PartitionsHolderBorrower::from_ptr(draws_ptr, nd, n_items, true).data(),
-        n_items,
-    );
-    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, n_items);
-    let (loss_function, pdi) = match LossFunction::from_code(loss, a) {
-        Some(loss_function) => match loss_function {
-            LossFunction::BinderDraws(_)
-            | LossFunction::OneMinusARI
-            | LossFunction::VI(_)
-            | LossFunction::NVI
-            | LossFunction::ID
-            | LossFunction::NID => (
-                loss_function,
-                PartitionDistributionInformation::Draws(&draws),
-            ),
-            LossFunction::BinderPSM | LossFunction::OneMinusARIapprox | LossFunction::VIlb => (
-                loss_function,
-                PartitionDistributionInformation::PairwiseSimilarityMatrix(&psm),
-            ),
-        },
-        None => panic!("Unsupported loss method: code = {}", loss),
-    };
-    let (max_size, max_size_as_rf) = if max_size < 0 {
-        (LabelType::try_from(-max_size).unwrap(), true)
-    } else {
-        (LabelType::try_from(max_size).unwrap(), false)
-    };
-    let n_runs = u32::try_from(n_runs).unwrap();
-    let max_scans = u32::try_from(max_scans).unwrap();
-    let max_zealous_updates = u32::try_from(max_zealous_updates).unwrap();
-    let n_cores = u32::try_from(n_cores).unwrap();
-    let mut rng = mk_rng_isaac(seed_ptr);
-    let p = SALSOParameters {
-        n_items,
-        max_size,
-        max_size_as_rf,
-        max_scans,
-        max_zealous_updates,
-        n_runs,
-        prob_sequential_allocation,
-        prob_singletons_initialization,
-    };
-    let results = minimize_by_salso(pdi, loss_function, &p, seconds, n_cores, &mut rng);
-    let results_slice = slice::from_raw_parts_mut(results_labels_ptr, n_items);
-    for (i, v) in results.clustering.iter().enumerate() {
-        results_slice[i] = i32::try_from(*v + 1).unwrap();
-    }
-    *results_expected_loss_ptr = results.expected_loss;
-    *results_n_scans_ptr = i32::try_from(results.n_scans).unwrap();
-    *results_n_zealous_accepts_ptr = i32::try_from(results.n_zealous_accepts).unwrap();
-    *results_n_zealous_attempts_ptr = i32::try_from(results.n_zealous_attempts).unwrap();
-    *results_n_runs_ptr = i32::try_from(results.n_runs).unwrap();
-    *results_max_size_ptr = i32::try_from(results.max_size).unwrap();
-    *results_seconds_ptr = results.seconds;
-    *results_initialization_method_ptr =
-        i32::try_from(results.initialization_method.to_code()).unwrap();
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn dahl_salso__minimize_by_enumeration(
-    n_items: i32,
-    psm_ptr: *mut f64,
-    loss: i32,
-    a: f64,
-    results_label_ptr: *mut i32,
-) {
-    let ni = usize::try_from(n_items).unwrap();
-    let psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
-    let f = match LossFunction::from_code(loss, a) {
-        Some(loss_function) => match loss_function {
-            LossFunction::BinderDraws(_) => panic!("No implementation for binder."),
-            LossFunction::BinderPSM => binder_single_kernel,
-            LossFunction::OneMinusARI => panic!("No implementation for omARI."),
-            LossFunction::OneMinusARIapprox => omariapprox_single,
-            LossFunction::VI(_) => panic!("No implementation for VI."),
-            LossFunction::VIlb => vilb_single_kernel,
-            LossFunction::NVI => panic!("No implementation for NVI."),
-            LossFunction::ID => panic!("No implementation for ID."),
-            LossFunction::NID => panic!("No implementation for NID."),
-        },
-        None => panic!("Unsupported loss method: code = {}", loss),
-    };
-    let minimizer = minimize_by_enumeration(f, &psm);
-    let results_slice = slice::from_raw_parts_mut(results_label_ptr, ni);
-    for (i, v) in minimizer.iter().enumerate() {
-        results_slice[i] = i32::try_from(*v + 1).unwrap();
     }
 }

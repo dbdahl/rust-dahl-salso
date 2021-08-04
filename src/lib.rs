@@ -1,8 +1,7 @@
 #![allow(dead_code)]
 
 #[cfg(test)]
-#[macro_use]
-extern crate approx;
+use approx::*;
 
 pub mod clustering;
 pub mod log2cache;
@@ -15,7 +14,7 @@ use dahl_partition::*;
 
 pub type CountType = u32; // u16; // usize;
 pub type LabelType = u16; // u8; // usize;
-const MAX_LABEL: u16 = std::u16::MAX - 1; // Should match LabelType;
+const MAX_LABEL: u16 = u16::MAX - 1; // Should match LabelType;
 
 #[derive(Copy, Clone)]
 pub enum PartitionDistributionInformation<'a> {
@@ -76,7 +75,7 @@ pub enum InitializationMethod {
 }
 
 impl InitializationMethod {
-    fn to_code(&self) -> u32 {
+    pub fn to_code(&self) -> u32 {
         match self {
             Self::SequentialFromEmpty => 0,
             Self::SequentialFromSingletons => 1,

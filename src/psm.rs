@@ -1,12 +1,9 @@
-extern crate num_cpus;
-
 use dahl_partition::*;
-use std::convert::TryFrom;
 use std::slice;
 
 pub fn psm(partitions: &PartitionsHolderBorrower, n_cores: u32) -> SquareMatrix {
     let mut psm = SquareMatrix::zeros(partitions.n_items());
-    engine(
+    psm_engine(
         partitions.n_partitions(),
         partitions.n_items(),
         n_cores,
@@ -35,7 +32,7 @@ mod tests {
     }
 }
 
-fn engine(
+pub fn psm_engine(
     n_partitions: usize,
     n_items: usize,
     n_cores: u32,
@@ -113,18 +110,3 @@ fn engine2(
     }
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn dahl_salso__psm(
-    n_partitions: i32,
-    n_items: i32,
-    n_cores: i32,
-    partitions_ptr: *mut i32,
-    psm_ptr: *mut f64,
-) {
-    let np = n_partitions as usize;
-    let ni = n_items as usize;
-    let partitions = PartitionsHolderBorrower::from_ptr(partitions_ptr, np, ni, true);
-    let mut psm = SquareMatrixBorrower::from_ptr(psm_ptr, ni);
-    let n_cores = u32::try_from(n_cores).unwrap();
-    engine(np, ni, n_cores, &partitions, &mut psm);
-}

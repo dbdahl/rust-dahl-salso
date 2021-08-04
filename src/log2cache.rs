@@ -1,6 +1,3 @@
-extern crate num_cpus;
-extern crate rand;
-
 use crate::*;
 
 #[derive(Debug, Clone)]
