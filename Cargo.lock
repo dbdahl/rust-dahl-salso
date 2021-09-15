@@ -101,23 +101,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "dahl-roxido"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45077ad20d49bd2a9ff505b81be604cd61a27f9aa00e4cc09600319a109e0455"
-dependencies = [
- "rand",
- "rand_isaac",
-]
-
-[[package]]
 name = "dahl-salso"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "approx",
  "crossbeam",
  "dahl-partition",
- "dahl-roxido",
  "ndarray",
  "num_cpus",
  "rand",
@@ -152,9 +141,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.98"
+version = "0.2.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "320cfe77175da3a483efed4bc0adc1968ca050b098ce4f2f1c13a56626128790"
+checksum = "a2a5ac8f984bfcf3a823267e5fde638acc3325f6496633a5da6bb6eb2171e103"
 
 [[package]]
 name = "matrixmultiply"
@@ -267,15 +256,6 @@ name = "rand_hc"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d51e9f596de227fda2ea6c84607f5558e196eeaf43c986b724ba4fb8fdf497e7"
-dependencies = [
- "rand_core",
-]
-
-[[package]]
-name = "rand_isaac"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fac4373cd91b4f55722c553fb0f286edbb81ef3ff6eec7b99d1898a4110a0b28"
 dependencies = [
  "rand_core",
 ]
