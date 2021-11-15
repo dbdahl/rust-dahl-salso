@@ -303,21 +303,22 @@ impl<'a> VICMLossComputer<'a> {
 
 impl<'a> CMLossComputer for VICMLossComputer<'a> {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
-        let sum2: f64 = state
-            .occupied_clusters()
-            .iter()
-            .map(|i| self.cache.nlog2n(state.size_of(*i)))
-            .sum();
+        let a_times_sum1: f64 = self.a
+            * state
+                .occupied_clusters()
+                .iter()
+                .map(|i| self.cache.nlog2n(state.size_of(*i)))
+                .sum::<f64>();
         let a_plus_1 = self.a + 1.0;
         let n_draws = cms.len_of(Axis(2));
         let mut sum = 0.0;
         for draw_index in 0..n_draws {
-            let mut sum1 = 0.0;
+            let mut sum2 = 0.0;
             let mut sum3 = 0.0;
             for other_index in 0..cms.len_of(Axis(1)) {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
-                    sum1 += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
+                    sum2 += self.cache.nlog2n(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
                         sum3 += self
                             .cache
@@ -325,7 +326,7 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                     }
                 }
             }
-            sum += (self.a * sum1 + sum2 - a_plus_1 * sum3) / (state.n_items() as f64);
+            sum += (a_times_sum1 + sum2 - a_plus_1 * sum3) / (state.n_items() as f64);
         }
         sum / (n_draws as f64)
     }
@@ -1743,8 +1744,8 @@ pub fn minimize_by_enumeration(
 
 #[cfg(test)]
 mod tests_optimize {
-    use rand::thread_rng;
     use super::*;
+    use rand::thread_rng;
 
     #[test]
     fn test_max_scan() {
