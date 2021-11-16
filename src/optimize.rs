@@ -303,12 +303,11 @@ impl<'a> VICMLossComputer<'a> {
 
 impl<'a> CMLossComputer for VICMLossComputer<'a> {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
-        let a_times_sum1: f64 = self.a
-            * state
-                .occupied_clusters()
-                .iter()
-                .map(|i| self.cache.nlog2n(state.size_of(*i)))
-                .sum::<f64>();
+        let sum1: f64 = state
+            .occupied_clusters()
+            .iter()
+            .map(|i| self.cache.nlog2n(state.size_of(*i)))
+            .sum();
         let a_plus_1 = self.a + 1.0;
         let n_draws = cms.len_of(Axis(2));
         let mut sum = 0.0;
@@ -326,9 +325,9 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                     }
                 }
             }
-            sum += (a_times_sum1 + sum2 - a_plus_1 * sum3) / (state.n_items() as f64);
+            sum += sum2 - a_plus_1 * sum3;
         }
-        sum / (n_draws as f64)
+        ((self.a * sum1) + (sum / (n_draws as f64))) / (state.n_items() as f64)
     }
 
     fn change_in_loss(
