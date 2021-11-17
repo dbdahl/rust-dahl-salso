@@ -104,14 +104,14 @@ impl CMLossComputer for BinderCMLossComputer {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let sum2 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64);
+        let sum1 = (n_draws as f64) * ((state.size_of(to_label) - offset) as f64);
         let to_index = to_label as usize + 1;
         let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             let other_index = draws.label(draw_index, item_index) as usize;
             sum3 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
-        sum2 - (self.a + 1.0) * sum3
+        self.a * sum1 - (self.a + 1.0) * sum3
     }
 }
 
@@ -345,7 +345,7 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
             0
         };
         let n_draws = cms.len_of(Axis(2));
-        let sum2 = (n_draws as f64)
+        let sum1 = (n_draws as f64)
             * self
                 .cache
                 .nlog2n_difference(state.size_of(to_label) - offset);
@@ -357,7 +357,7 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                 .cache
                 .nlog2n_difference(cms[(to_index, other_index, draw_index)] - offset);
         }
-        sum2 - (self.a + 1.0) * sum3
+        self.a * sum1 - (self.a + 1.0) * sum3
     }
 }
 
