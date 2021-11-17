@@ -64,19 +64,19 @@ impl BinderCMLossComputer {
 impl CMLossComputer for BinderCMLossComputer {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let n_draws = cms.len_of(Axis(2));
-        let sum2 = state
+        let sum1 = state
             .occupied_clusters()
             .iter()
             .map(|i| BinderCMLossComputer::n_squared(state.size_of(*i)))
             .sum::<f64>()
             * n_draws as f64;
-        let mut sum1 = 0.0;
+        let mut sum2 = 0.0;
         let mut sum3 = 0.0;
         for draw_index in 0..n_draws {
             for other_index in 0..cms.len_of(Axis(1)) {
                 let n = cms[(0, other_index, draw_index)];
                 if n > 0 {
-                    sum1 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
+                    sum2 += BinderCMLossComputer::n_squared(cms[(0, other_index, draw_index)]);
                     for main_label in state.occupied_clusters().iter() {
                         sum3 += BinderCMLossComputer::n_squared(
                             cms[(*main_label as usize + 1, other_index, draw_index)],
