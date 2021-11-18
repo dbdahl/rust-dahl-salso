@@ -308,7 +308,6 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
             .iter()
             .map(|i| self.cache.nlog2n(state.size_of(*i)))
             .sum();
-        let a_plus_1 = self.a + 1.0;
         let n_draws = cms.len_of(Axis(2));
         let mut sum = 0.0;
         for draw_index in 0..n_draws {
@@ -325,7 +324,7 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                     }
                 }
             }
-            sum += self.a * sum1 - a_plus_1 * sum3;
+            sum += self.a * (sum1 - sum3) - sum3;  // equivalent to: self.a * sum1 - (self.a + 1.0) * sum3;
         }
         (sum2 + (sum / (n_draws as f64))) / (state.n_items() as f64)
     }
