@@ -85,7 +85,7 @@ impl CMLossComputer for BinderCMLossComputer {
                 }
             }
         }
-        (self.a * sum1 + sum2 - (self.a + 1.0) * sum3)
+        (self.a * sum1 + (2.0 - self.a) * sum2 - 2.0 * sum3)
             / (n_draws as f64 * BinderCMLossComputer::n_squared(state.n_items()))
     }
 
@@ -111,7 +111,7 @@ impl CMLossComputer for BinderCMLossComputer {
             let other_index = draws.label(draw_index, item_index) as usize;
             sum3 += (cms[(to_index, other_index, draw_index)] - offset) as f64;
         }
-        sum2 - (self.a + 1.0) * sum3
+        (2.0 - self.a) * sum2 - 2.0 * sum3
     }
 }
 
@@ -324,9 +324,9 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                     }
                 }
             }
-            sum += self.a * (sum1 - sum3) - sum3;  // equivalent to: self.a * sum1 - (self.a + 1.0) * sum3;
+            sum += self.a * sum1 - 2.0 * sum3;
         }
-        (sum2 + (sum / (n_draws as f64))) / (state.n_items() as f64)
+        ((2.0 - self.a) * sum2 + (sum / (n_draws as f64))) / (state.n_items() as f64)
     }
 
     fn change_in_loss(
@@ -356,7 +356,7 @@ impl<'a> CMLossComputer for VICMLossComputer<'a> {
                 .cache
                 .nlog2n_difference(cms[(to_index, other_index, draw_index)] - offset);
         }
-        sum2 - (self.a + 1.0) * sum3
+        (2.0 - self.a) * sum2 - 2.0 * sum3
     }
 }
 
