@@ -1486,6 +1486,7 @@ pub fn minimize_by_salso<T: Rng>(
     n_cores: u32,
     mut rng: &mut T,
 ) -> SALSOResults {
+    let start_time = Instant::now();
     let cache = Log2Cache::new(match loss_function {
         LossFunction::VI(_) | LossFunction::NVI | LossFunction::ID | LossFunction::NID => p.n_items,
         _ => 0,
@@ -1697,6 +1698,7 @@ pub fn minimize_by_salso<T: Rng>(
             }
             _ => result.expected_loss,
         },
+        seconds: start_time.elapsed().as_secs_f64(),
         ..result
     };
     result
