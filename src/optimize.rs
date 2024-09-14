@@ -1054,7 +1054,7 @@ impl<'a> GeneralLossComputer for OMARIApproxGLossComputer<'a> {
     }
 
     fn add_with_index(&mut self, partition: &mut Partition, i: usize, subset_index: LabelType) {
-        let mut sc = &mut self.subsets[subset_index as usize];
+        let sc = &mut self.subsets[subset_index as usize];
         sc.committed_ip += sc.speculative_ip;
         sc.committed_i += sc.speculative_i;
         self.committed_n_items += 1;
