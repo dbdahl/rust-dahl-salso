@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 
 # dahl-partition = "0.5.3"
-dahl-partition = { git="https://github.com/dbdahl/rust-dahl-partition.git", rev="419ac7d" }
+dahl-partition = { git="https://github.com/dbdahl/rust-dahl-partition.git", rev="ae99dfd12e4" }
 # dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
 
 rand = "0.8.4"

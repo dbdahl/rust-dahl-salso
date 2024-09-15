@@ -88,7 +88,7 @@ checksum = "22ec99545bb0ed0ea7bb9b8e1e9122ea386ff8a48c0922e43f36d45ab09e0e80"
 [[package]]
 name = "dahl-partition"
 version = "0.5.3"
-source = "git+https://github.com/dbdahl/rust-dahl-partition.git?rev=419ac7d#419ac7db6f2a6309fccbd2b26008a5e8b3a48444"
+source = "git+https://github.com/dbdahl/rust-dahl-partition.git?rev=ae99dfd12e4#ae99dfd12e4a127e05a15fa2ef6814cf8032127a"
 dependencies = [
  "rand",
 ]
