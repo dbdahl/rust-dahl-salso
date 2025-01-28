@@ -4,7 +4,7 @@ use crate::loss::*;
 use crate::*;
 use dahl_partition::*;
 use ndarray::{Array2, Array3, Axis};
-use rand::distributions::{Distribution, Uniform};
+use rand::distr::{Distribution, Uniform};
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use rand_pcg::Pcg64Mcg;
@@ -301,7 +301,7 @@ impl<'a> VICMLossComputer<'a> {
     }
 }
 
-impl<'a> CMLossComputer for VICMLossComputer<'a> {
+impl CMLossComputer for VICMLossComputer<'_> {
     fn compute_loss(&self, state: &WorkingClustering, cms: &Array3<CountType>) -> f64 {
         let sum2: f64 = state
             .occupied_clusters()
@@ -388,7 +388,7 @@ where
     }
 }
 
-impl<'a, T> CMLossComputer for GeneralInformationBasedCMLossComputer<'a, T>
+impl<T> CMLossComputer for GeneralInformationBasedCMLossComputer<'_, T>
 where
     T: InformationBasedLoss,
 {
@@ -671,7 +671,7 @@ fn allocation_scan<T: CMLossComputer>(
 fn sweetening_scans<T: CMLossComputer, U: Rng>(
     state: &mut WorkingClustering,
     cms: &mut Array3<CountType>,
-    permutation: &mut Vec<usize>,
+    permutation: &mut [usize],
     loss_computer: &mut T,
     scan_counter: &mut u32,
     draws: &Clusterings,
@@ -704,7 +704,7 @@ pub fn minimize_once_by_salso_v2<'a, T: CMLossComputer, U: Rng>(
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
     let mut best = SALSOResults::dummy(max_size);
     let start_time = Instant::now();
-    let uniform_0_1 = Uniform::from(0.0..1.0);
+    let uniform_0_1 = Uniform::new(0.0, 1.0).unwrap();
     for run_counter in 1..=p.n_runs {
         let mut loss_computer = loss_computer_factory();
         let singletons_initialization = uniform_0_1.sample(rng) < p.prob_singletons_initialization;
@@ -909,7 +909,7 @@ impl<'a> BinderGLossComputer<'a> {
     }
 }
 
-impl<'a> GeneralLossComputer for BinderGLossComputer<'a> {
+impl GeneralLossComputer for BinderGLossComputer<'_> {
     fn expected_loss_kernel(&self) -> f64 {
         self.subsets
             .iter()
@@ -992,7 +992,7 @@ impl<'a> OMARIApproxGLossComputer<'a> {
     }
 }
 
-impl<'a> OMARIApproxGLossComputer<'a> {
+impl OMARIApproxGLossComputer<'_> {
     fn engine(
         &self,
         speculative_n_items: usize,
@@ -1015,7 +1015,7 @@ impl<'a> OMARIApproxGLossComputer<'a> {
     }
 }
 
-impl<'a> GeneralLossComputer for OMARIApproxGLossComputer<'a> {
+impl GeneralLossComputer for OMARIApproxGLossComputer<'_> {
     fn expected_loss_kernel(&self) -> f64 {
         self.engine(0, 0.0, 0.0, 0.0)
     }
@@ -1134,7 +1134,7 @@ impl<'a> VILBGLossComputer<'a> {
     }
 }
 
-impl<'a> GeneralLossComputer for VILBGLossComputer<'a> {
+impl GeneralLossComputer for VILBGLossComputer<'_> {
     fn expected_loss_kernel(&self) -> f64 {
         self.subsets
             .iter()
@@ -1309,7 +1309,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
     };
     let mut best = SALSOResults::dummy(max_label + 1);
     let mut permutation: Vec<usize> = (0..p.n_items).collect();
-    let uniform_0_1 = Uniform::from(0.0..1.0);
+    let uniform_0_1 = Uniform::new(0.0, 1.0).unwrap();
     let mut run_counter = 0;
     while run_counter < p.n_runs {
         let mut computer = computer_factory();
@@ -1344,7 +1344,7 @@ pub fn minimize_once_by_salso<'a, T: Rng, U: GeneralLossComputer>(
             // let mut partition = Partition::new(p.n_items);
             // let destiny = {
             //     let mut v = Vec::with_capacity(p.n_items);
-            //     v.resize_with(p.n_items, || rng.gen_range(0, max_label + 1));
+            //     v.resize_with(p.n_items, || rng.random_range(0, max_label + 1));
             //     Partition::from(&v) // Already canonicalized
             // };
             // for i in 0..p.n_items {
@@ -1466,7 +1466,7 @@ impl SALSOResults {
     pub fn dummy(max_size: LabelType) -> Self {
         SALSOResults::new(
             vec![0usize; 0],
-            std::f64::INFINITY,
+            f64::INFINITY,
             0,
             0,
             0,
@@ -1588,7 +1588,7 @@ pub fn minimize_by_salso<T: Rng>(
         crossbeam::scope(|s| {
             for _ in 0..n_cores {
                 let tx = mpsc::Sender::clone(&tx);
-                let mut child_rng = Pcg64Mcg::from_rng(&mut rng).unwrap();
+                let mut child_rng = Pcg64Mcg::from_rng(&mut rng);
                 let p = p.clone();
                 s.spawn(move |_| {
                     let result = match loss_function {
@@ -1713,7 +1713,7 @@ pub fn minimize_by_enumeration(
         for iter in Partition::iter_sharded(num_cpus::get() as u32, psm.n_items()) {
             let tx = mpsc::Sender::clone(&tx);
             s.spawn(move |_| {
-                let mut working_minimum = std::f64::INFINITY;
+                let mut working_minimum = f64::INFINITY;
                 let mut working_minimizer = vec![0usize; psm.n_items()];
                 for partition in iter {
                     let part: Vec<LabelType> = partition.iter().map(|x| *x as LabelType).collect();
@@ -1729,7 +1729,7 @@ pub fn minimize_by_enumeration(
     })
     .unwrap();
     std::mem::drop(tx); // Because of the cloning in the loop.
-    let mut working_minimum = std::f64::INFINITY;
+    let mut working_minimum = f64::INFINITY;
     let mut working_minimizer = vec![0usize; psm.n_items()];
     for partition in rx {
         let part: Vec<LabelType> = partition.iter().map(|x| *x as LabelType).collect();
@@ -1745,7 +1745,7 @@ pub fn minimize_by_enumeration(
 #[cfg(test)]
 mod tests_optimize {
     use super::*;
-    use rand::thread_rng;
+    use rand::rng;
 
     #[test]
     fn test_max_scan() {
@@ -1768,7 +1768,7 @@ mod tests_optimize {
             &p,
             5.0,
             1,
-            &mut thread_rng(),
+            &mut rng(),
         );
     }
 }

@@ -13,25 +13,6 @@ pub fn psm(partitions: &PartitionsHolderBorrower, n_cores: u32) -> SquareMatrix 
     psm
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_psm() {
-        let mut partitions = PartitionsHolder::new(4);
-        partitions.push_partition(&Partition::from("AABB".as_bytes()));
-        partitions.push_partition(&Partition::from("AAAB".as_bytes()));
-        partitions.push_partition(&Partition::from("ABBB".as_bytes()));
-        partitions.push_partition(&Partition::from("AAAB".as_bytes()));
-        let partitions_view = partitions.view();
-        let psm1 = psm(&partitions_view, 2);
-        assert_eq!(format!("{:?}", psm1.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
-        let psm2 = psm(&partitions_view, 1);
-        assert_eq!(format!("{:?}", psm2.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
-    }
-}
-
 pub fn psm_engine(
     n_partitions: usize,
     n_items: usize,
@@ -110,3 +91,21 @@ fn engine2(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_psm() {
+        let mut partitions = PartitionsHolder::new(4);
+        partitions.push_partition(&Partition::from("AABB".as_bytes()));
+        partitions.push_partition(&Partition::from("AAAB".as_bytes()));
+        partitions.push_partition(&Partition::from("ABBB".as_bytes()));
+        partitions.push_partition(&Partition::from("AAAB".as_bytes()));
+        let partitions_view = partitions.view();
+        let psm1 = psm(&partitions_view, 2);
+        assert_eq!(format!("{:?}", psm1.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
+        let psm2 = psm(&partitions_view, 1);
+        assert_eq!(format!("{:?}", psm2.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
+    }
+}

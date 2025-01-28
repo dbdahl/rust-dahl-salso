@@ -245,14 +245,14 @@ mod tests_loss {
         let psm_view = &psm.view();
         let mut results = vec![0.0; n_partitions];
         binder_multiple(samples_view, psm_view, &mut results[..]);
-        for k in 0..n_partitions {
+        for (k, item) in results.iter().enumerate() {
             let part: Vec<LabelType> = samples_view
                 .get(k)
                 .labels_via_copying()
                 .iter()
                 .map(|x| *x as LabelType)
                 .collect();
-            assert_relative_eq!(binder_single(&part[..], psm_view), results[k]);
+            assert_relative_eq!(binder_single(&part[..], psm_view), item);
         }
         compute_loss_multiple(
             Box::new(|| OMARICMLossComputer::new(n_partitions)),
@@ -261,14 +261,14 @@ mod tests_loss {
             &mut results[..],
         );
         omariapprox_multiple(samples_view, psm_view, &mut results[..]);
-        for k in 0..n_partitions {
+        for (k, item) in results.iter().enumerate() {
             let part: Vec<LabelType> = samples_view
                 .get(k)
                 .labels_via_copying()
                 .iter()
                 .map(|x| *x as LabelType)
                 .collect();
-            assert_relative_eq!(omariapprox_single(&part[..], psm_view), results[k]);
+            assert_relative_eq!(omariapprox_single(&part[..], psm_view), item);
         }
         let cache = Log2Cache::new(n_items);
         compute_loss_multiple(
@@ -278,14 +278,14 @@ mod tests_loss {
             &mut results[..],
         );
         vilb_multiple(samples_view, psm_view, &mut results[..]);
-        for k in 0..n_partitions {
+        for (k, item) in results.iter().enumerate() {
             let part: Vec<LabelType> = samples_view
                 .get(k)
                 .labels_via_copying()
                 .iter()
                 .map(|x| *x as LabelType)
                 .collect();
-            assert_ulps_eq!(vilb_single(&part[..], psm_view), results[k]);
+            assert_ulps_eq!(vilb_single(&part[..], psm_view), item);
         }
         for k in 1..n_partitions {
             let part: Vec<LabelType> = samples_view
