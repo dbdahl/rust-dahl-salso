@@ -24,9 +24,11 @@ pub fn psm_engine(
         engine2(n_partitions, n_items, None, partitions, psm);
     } else {
         let n_cores = if n_cores == 0 {
-            num_cpus::get()
+            std::thread::available_parallelism()
+                .map(|x| x.get())
+                .unwrap_or(1)
         } else {
-            n_cores as usize
+            n_cores.try_into().unwrap_or(1)
         };
         let n_pairs = n_items * (n_items - 1) / 2;
         let step_size = n_pairs / n_cores + 1;

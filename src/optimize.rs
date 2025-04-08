@@ -1575,13 +1575,15 @@ pub fn minimize_by_salso<T: Rng>(
     } else {
         let (tx, rx) = mpsc::channel();
         let n_cores = if n_cores == 0 {
-            num_cpus::get() as u32
+            std::thread::available_parallelism()
+                .map(|x| x.get() as u32)
+                .unwrap_or(1)
         } else {
             n_cores
         };
         let p = p.clone();
         let p = SALSOParameters {
-            n_runs: (p.n_runs + n_cores - 1) / n_cores,
+            n_runs: p.n_runs.div_ceil(n_cores),
             ..p
         };
         let cache_ref = &cache;
@@ -1710,7 +1712,10 @@ pub fn minimize_by_enumeration(
 ) -> Vec<usize> {
     let (tx, rx) = mpsc::channel();
     crossbeam::scope(|s| {
-        for iter in Partition::iter_sharded(num_cpus::get() as u32, psm.n_items()) {
+        let n_cores = std::thread::available_parallelism()
+            .map(|x| x.get() as u32)
+            .unwrap_or(1);
+        for iter in Partition::iter_sharded(n_cores, psm.n_items()) {
             let tx = mpsc::Sender::clone(&tx);
             s.spawn(move |_| {
                 let mut working_minimum = f64::INFINITY;
