@@ -11,7 +11,7 @@ rust-version = "1.81"
 [dependencies]
 
 # dahl-partition = "0.5.3"
-dahl-partition = { git="https://github.com/dbdahl/rust-dahl-partition.git", rev="f3a39e1" }
+dahl-partition = { git="https://github.com/dbdahl/rust-dahl-partition.git", rev="52e1871" }
 # dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
 
 rand = "0.10.0"
