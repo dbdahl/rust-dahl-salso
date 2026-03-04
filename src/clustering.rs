@@ -3,6 +3,7 @@ use crate::*;
 use crate::optimize::CMLossComputer;
 use ndarray::Array3;
 use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
