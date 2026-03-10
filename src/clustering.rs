@@ -3,6 +3,7 @@ use crate::*;
 use crate::optimize::CMLossComputer;
 use ndarray::Array3;
 use rand::Rng;
+use rand::RngExt;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -267,7 +268,7 @@ impl WorkingClustering {
     ///
     /// There is no checking for the `item_index`.
     pub unsafe fn get_unchecked(&self, item_index: usize) -> LabelType {
-        *self.labels.get_unchecked(item_index)
+        unsafe { *self.labels.get_unchecked(item_index) }
     }
 
     pub fn assign<T: CMLossComputer>(
