@@ -1690,7 +1690,7 @@ pub fn minimize_by_salso<T: Rng>(
         best.n_runs = run_counter;
         best
     };
-    let result = SALSOResults {
+    SALSOResults {
         expected_loss: match loss_function {
             LossFunction::BinderPSM => {
                 BinderGLossComputer::expected_loss_from_kernel(pdi.psm(), result.expected_loss)
@@ -1702,8 +1702,7 @@ pub fn minimize_by_salso<T: Rng>(
         },
         seconds: start_time.elapsed().as_secs_f64(),
         ..result
-    };
-    result
+    }
 }
 
 pub fn minimize_by_enumeration(

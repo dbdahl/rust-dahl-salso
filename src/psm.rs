@@ -106,8 +106,14 @@ mod tests {
         partitions.push_partition(&Partition::from("AAAB".as_bytes()));
         let partitions_view = partitions.view();
         let psm1 = psm(&partitions_view, 2);
-        assert_eq!(format!("{:?}", psm1.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
+        assert_eq!(
+            format!("{:?}", psm1.data()),
+            "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]"
+        );
         let psm2 = psm(&partitions_view, 1);
-        assert_eq!(format!("{:?}", psm2.data()), "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]");
+        assert_eq!(
+            format!("{:?}", psm2.data()),
+            "[1.0, 0.75, 0.5, 0.0, 0.75, 1.0, 0.75, 0.25, 0.5, 0.75, 1.0, 0.5, 0.0, 0.25, 0.5, 1.0]"
+        );
     }
 }

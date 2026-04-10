@@ -22,7 +22,12 @@ impl Clusterings {
         labels: Vec<LabelType>,
         n_clusters: Vec<LabelType>,
     ) -> Self {
-        assert_eq!(n_clusterings * n_items, labels.len());
+        assert_eq!(
+            n_clusterings
+                .checked_mul(n_items)
+                .expect("n_clusterings * n_items overflowed"),
+            labels.len()
+        );
         assert_eq!(n_clusterings, n_clusters.len());
         let max_clusters = *n_clusters.iter().max().unwrap();
         Self {
@@ -35,6 +40,12 @@ impl Clusterings {
     }
 
     pub fn from_i32_column_major_order(original_labels: &[i32], n_items: usize) -> Self {
+        assert!(n_items > 0, "n_items must be positive");
+        assert_eq!(
+            original_labels.len() % n_items,
+            0,
+            "original_labels.len() must be divisible by n_items"
+        );
         let n_clusterings = original_labels.len() / n_items;
         let mut labels = Vec::with_capacity(n_clusterings * n_items);
         let mut n_clusters = Vec::with_capacity(n_clusterings);
@@ -45,7 +56,7 @@ impl Clusterings {
             let mut next_new_label = 0;
             for j in 0..n_items {
                 let c = *map
-                    .entry(unsafe { original_labels.get_unchecked(j * n_clusterings + i) })
+                    .entry(original_labels[j * n_clusterings + i])
                     .or_insert_with(|| {
                         let c = next_new_label;
                         next_new_label += 1;
@@ -93,6 +104,16 @@ impl Clusterings {
     }
 
     pub fn label(&self, draw_index: usize, item_index: usize) -> LabelType {
+        assert!(
+            draw_index < self.n_clusterings,
+            "draw_index {draw_index} out of bounds for {} clusterings",
+            self.n_clusterings
+        );
+        assert!(
+            item_index < self.n_items,
+            "item_index {item_index} out of bounds for {} items",
+            self.n_items
+        );
         unsafe {
             *self
                 .labels
@@ -105,6 +126,11 @@ impl Clusterings {
     }
 
     pub fn n_clusters(&self, draw_index: usize) -> LabelType {
+        assert!(
+            draw_index < self.n_clusterings,
+            "draw_index {draw_index} out of bounds for {} clusterings",
+            self.n_clusterings
+        );
         unsafe { *self.n_clusters.get_unchecked(draw_index) }
     }
 
@@ -121,6 +147,67 @@ impl Clusterings {
         let mean = sum1 / ndf;
         let sd = ((sum2 - sum1 * sum1 / ndf) / (ndf - 1.0)).sqrt();
         (mean, sd)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Clusterings;
+
+    fn example_clusterings() -> Clusterings {
+        Clusterings::from_i32_column_major_order(&[1, 1, 2, 2], 2)
+    }
+
+    #[test]
+    fn from_i32_column_major_order_constructs_expected_clusterings() {
+        let clusterings = example_clusterings();
+        assert_eq!(clusterings.n_clusterings(), 2);
+        assert_eq!(clusterings.n_items(), 2);
+        assert_eq!(clusterings.label(0, 0), 0);
+        assert_eq!(clusterings.label(0, 1), 1);
+        assert_eq!(clusterings.label(1, 0), 0);
+        assert_eq!(clusterings.label(1, 1), 1);
+        assert_eq!(clusterings.n_clusters(0), 2);
+        assert_eq!(clusterings.n_clusters(1), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "n_items must be positive")]
+    fn from_i32_column_major_order_rejects_zero_items() {
+        let _ = Clusterings::from_i32_column_major_order(&[1, 2, 3], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "original_labels.len() must be divisible by n_items")]
+    fn from_i32_column_major_order_rejects_non_divisible_input() {
+        let _ = Clusterings::from_i32_column_major_order(&[1, 2, 3], 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "draw_index")]
+    fn label_rejects_out_of_bounds_draw_index() {
+        let clusterings = example_clusterings();
+        let _ = clusterings.label(clusterings.n_clusterings(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "item_index")]
+    fn label_rejects_out_of_bounds_item_index() {
+        let clusterings = example_clusterings();
+        let _ = clusterings.label(0, clusterings.n_items());
+    }
+
+    #[test]
+    #[should_panic(expected = "draw_index")]
+    fn n_clusters_rejects_out_of_bounds_draw_index() {
+        let clusterings = example_clusterings();
+        let _ = clusterings.n_clusters(clusterings.n_clusterings());
+    }
+
+    #[test]
+    #[should_panic(expected = "n_clusterings * n_items overflowed")]
+    fn unvalidated_rejects_overflowing_shape() {
+        let _ = Clusterings::unvalidated(usize::MAX, 2, Vec::new(), Vec::new());
     }
 }
 
