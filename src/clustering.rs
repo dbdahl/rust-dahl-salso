@@ -10,12 +10,15 @@ use std::collections::HashMap;
 pub struct Clusterings {
     n_clusterings: usize,
     n_items: usize,
+    // Item-major (item_index * n_clusterings + draw_index), so that the labels of an item
+    // across all clusterings are contiguous for the optimizer's inner loops.
     labels: Vec<LabelType>,
     n_clusters: Vec<LabelType>,
     max_clusters: LabelType,
 }
 
 impl Clusterings {
+    // `labels` is clustering-major: draw_index * n_items + item_index.
     pub fn unvalidated(
         n_clusterings: usize,
         n_items: usize,
@@ -30,10 +33,16 @@ impl Clusterings {
         );
         assert_eq!(n_clusterings, n_clusters.len());
         let max_clusters = *n_clusters.iter().max().unwrap();
+        let mut labels_by_item = Vec::with_capacity(labels.len());
+        for item_index in 0..n_items {
+            for draw_index in 0..n_clusterings {
+                labels_by_item.push(labels[draw_index * n_items + item_index]);
+            }
+        }
         Self {
             n_clusterings,
             n_items,
-            labels,
+            labels: labels_by_item,
             n_clusters,
             max_clusters,
         }
@@ -47,7 +56,7 @@ impl Clusterings {
             "original_labels.len() must be divisible by n_items"
         );
         let n_clusterings = original_labels.len() / n_items;
-        let mut labels = Vec::with_capacity(n_clusterings * n_items);
+        let mut labels = vec![0; n_clusterings * n_items];
         let mut n_clusters = Vec::with_capacity(n_clusterings);
         let mut map = HashMap::new();
         let mut max_clusters = 0;
@@ -62,7 +71,7 @@ impl Clusterings {
                         next_new_label += 1;
                         c
                     });
-                labels.push(c);
+                labels[j * n_clusterings + i] = c;
             }
             n_clusters.push(next_new_label);
             if next_new_label > max_clusters {
@@ -117,12 +126,23 @@ impl Clusterings {
         unsafe {
             *self
                 .labels
-                .get_unchecked(draw_index * self.n_items + item_index)
+                .get_unchecked(item_index * self.n_clusterings + draw_index)
         }
     }
 
-    pub fn labels(&self, draw_index: usize) -> &[LabelType] {
-        &self.labels[draw_index * self.n_items..(draw_index + 1) * self.n_items]
+    pub fn labels(&self, draw_index: usize) -> Vec<LabelType> {
+        (0..self.n_items)
+            .map(|item_index| self.label(draw_index, item_index))
+            .collect()
+    }
+
+    pub fn labels_of_item(&self, item_index: usize) -> &[LabelType] {
+        assert!(
+            item_index < self.n_items,
+            "item_index {item_index} out of bounds for {} items",
+            self.n_items
+        );
+        &self.labels[item_index * self.n_clusterings..(item_index + 1) * self.n_clusterings]
     }
 
     pub fn n_clusters(&self, draw_index: usize) -> LabelType {
@@ -208,6 +228,62 @@ mod tests {
     #[should_panic(expected = "n_clusterings * n_items overflowed")]
     fn unvalidated_rejects_overflowing_shape() {
         let _ = Clusterings::unvalidated(usize::MAX, 2, Vec::new(), Vec::new());
+    }
+
+    // Three clusterings of four items, in R's column-major (clustering by item) order.
+    fn three_by_four() -> Clusterings {
+        Clusterings::from_i32_column_major_order(&[5, 1, 9, 5, 2, 9, 7, 3, 9, 7, 1, 9], 4)
+    }
+
+    #[test]
+    fn labels_by_clustering_and_by_item() {
+        let clusterings = three_by_four();
+        assert_eq!(clusterings.n_clusterings(), 3);
+        assert_eq!(clusterings.n_items(), 4);
+        assert_eq!(clusterings.labels(0), vec![0, 0, 1, 1]);
+        assert_eq!(clusterings.labels(1), vec![0, 1, 2, 0]);
+        assert_eq!(clusterings.labels(2), vec![0, 0, 0, 0]);
+        assert_eq!(clusterings.labels_of_item(0), &[0, 0, 0]);
+        assert_eq!(clusterings.labels_of_item(2), &[1, 2, 0]);
+        assert_eq!(clusterings.labels_of_item(3), &[1, 0, 0]);
+        assert_eq!(clusterings.max_clusters(), 3);
+    }
+
+    #[test]
+    fn unvalidated_agrees_with_from_i32_column_major_order() {
+        let expected = three_by_four();
+        let clusterings = Clusterings::unvalidated(
+            3,
+            4,
+            vec![0, 0, 1, 1, 0, 1, 2, 0, 0, 0, 0, 0],
+            vec![2, 3, 1],
+        );
+        for draw_index in 0..3 {
+            assert_eq!(clusterings.labels(draw_index), expected.labels(draw_index));
+            assert_eq!(
+                clusterings.n_clusters(draw_index),
+                expected.n_clusters(draw_index)
+            );
+            for item_index in 0..4 {
+                assert_eq!(
+                    clusterings.label(draw_index, item_index),
+                    expected.label(draw_index, item_index)
+                );
+            }
+        }
+        for item_index in 0..4 {
+            assert_eq!(
+                clusterings.labels_of_item(item_index),
+                expected.labels_of_item(item_index)
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "item_index")]
+    fn labels_of_item_rejects_out_of_bounds_item_index() {
+        let clusterings = three_by_four();
+        let _ = clusterings.labels_of_item(clusterings.n_items());
     }
 }
 

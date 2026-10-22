@@ -344,17 +344,18 @@ impl CMLossComputer for VICMLossComputer<'_> {
             0
         };
         let n_draws = cms.len_of(Axis(2));
+        assert_eq!(n_draws, draws.n_clusterings(), "cms and draws disagree");
         let sum2 = (n_draws as f64)
             * self
                 .cache
                 .nlog2n_difference(state.size_of(to_label) - offset);
         let to_index = to_label as usize + 1;
         let mut sum3 = 0.0;
-        for draw_index in 0..n_draws {
-            let other_index = draws.label(draw_index, item_index) as usize;
+        // Zipping a range with a contiguous slice keeps per-draw bounds checks out of this hot loop.
+        for (draw_index, other_index) in (0..n_draws).zip(draws.labels_of_item(item_index)) {
             sum3 += self
                 .cache
-                .nlog2n_difference(cms[(to_index, other_index, draw_index)] - offset);
+                .nlog2n_difference(cms[(to_index, *other_index as usize, draw_index)] - offset);
         }
         (2.0 - self.a) * sum2 - 2.0 * sum3
     }
@@ -467,7 +468,8 @@ where
             let other_index = draws.label(draw_index, item_index) as usize;
             let u = self.sums[(draw_index, 0)]
                 + if from_label_option.is_none() {
-                    self.cache.nlog2n_difference(n)
+                    self.cache
+                        .nlog2n_difference(cms[(0, other_index, draw_index)])
                 } else {
                     0.0
                 };
@@ -553,6 +555,10 @@ pub struct NVIInformationBasedLoss;
 
 impl InformationBasedLoss for NVIInformationBasedLoss {
     fn compute_kernel(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
+        // Identical partitions have zero loss, including when both entropies are zero.
+        if u == uv && v == uv {
+            return 0.0;
+        }
         (u + v - 2.0 * uv) / (nlog2n - uv)
     }
     fn finalize(&self, sum: f64, n_draws: f64, _n_items: f64) -> f64 {
@@ -585,6 +591,11 @@ pub struct NIDInformationBasedLoss;
 
 impl InformationBasedLoss for NIDInformationBasedLoss {
     fn compute_kernel(&self, u: f64, v: f64, uv: f64, nlog2n: f64) -> f64 {
+        // This kernel is similarity: finalize converts one to zero loss.
+        // Handle identical partitions before dividing by a possibly zero entropy.
+        if u == uv && v == uv {
+            return 1.0;
+        }
         (nlog2n + uv - u - v) / (nlog2n - u.min(v))
     }
     fn finalize(&self, sum: f64, n_draws: f64, _n_items: f64) -> f64 {
@@ -1749,7 +1760,7 @@ pub fn minimize_by_enumeration(
 #[cfg(test)]
 mod tests_optimize {
     use super::*;
-    use rand::rng;
+    use rand::{RngExt, rng};
 
     #[test]
     fn test_max_scan() {
@@ -1774,5 +1785,308 @@ mod tests_optimize {
             1,
             &mut rng(),
         );
+    }
+
+    fn random_draws(n_items: usize, n_draws: usize) -> Clusterings {
+        let mut rng = Pcg64Mcg::seed_from_u64(7);
+        let labels: Vec<i32> = (0..n_items * n_draws)
+            .map(|_| rng.random_range(0..4))
+            .collect();
+        Clusterings::from_i32_column_major_order(&labels, n_items)
+    }
+
+    // Builds the loss computer's state from scratch by assigning items in order.
+    fn build<T: CMLossComputer>(
+        mut loss_computer: T,
+        draws: &Clusterings,
+        assignments: &[(usize, LabelType)],
+    ) -> (T, WorkingClustering, Array3<CountType>) {
+        let max_size = 6;
+        let mut state = WorkingClustering::empty(draws.n_items(), max_size);
+        let mut cms = Array3::<CountType>::zeros((
+            max_size as usize + 1,
+            draws.max_clusters() as usize,
+            draws.n_clusterings(),
+        ));
+        for &(item_index, label) in assignments {
+            state.assign(item_index, label, &mut loss_computer, &mut cms, draws);
+        }
+        (loss_computer, state, cms)
+    }
+
+    // change_in_loss returns the loss after the move up to an affine map (`to_loss`), so it must
+    // agree with compute_loss on a state built from scratch with the move applied.
+    fn check_information_based_change_in_loss<T: InformationBasedLoss>(
+        ibloss: impl Fn() -> T,
+        to_loss: impl Fn(f64, f64, f64) -> f64,
+    ) {
+        let n_items = 12;
+        let n_draws = 9;
+        let draws = random_draws(n_items, n_draws);
+        // Sized exactly, as in minimize_by_salso.
+        let cache = Log2Cache::new(n_items);
+        let new = || GeneralInformationBasedCMLossComputer::new(n_draws, &cache, ibloss());
+        let actual = |assignments: &[(usize, LabelType)]| {
+            let (loss_computer, state, cms) = build(new(), &draws, assignments);
+            loss_computer.compute_loss(&state, &cms)
+        };
+        // Sequential allocation of item m, up to and including the last item.
+        for m in 0..n_items {
+            let assignments: Vec<_> = (0..m).map(|i| (i, (i % 3) as LabelType)).collect();
+            let (loss_computer, state, cms) = build(new(), &draws, &assignments);
+            for to_label in 0..4 {
+                let score = loss_computer.change_in_loss(m, to_label, None, &state, &cms, &draws);
+                let mut moved = assignments.clone();
+                moved.push((m, to_label));
+                assert_relative_eq!(
+                    to_loss(score, n_draws as f64, (m + 1) as f64),
+                    actual(&moved),
+                    max_relative = 1e-12
+                );
+            }
+        }
+        // Reassignment of item m when all items are allocated.
+        let assignments: Vec<_> = (0..n_items).map(|i| (i, (i % 3) as LabelType)).collect();
+        let (loss_computer, state, cms) = build(new(), &draws, &assignments);
+        for m in 0..n_items {
+            for to_label in 0..4 {
+                let from_label = Some(state.get(m));
+                let score =
+                    loss_computer.change_in_loss(m, to_label, from_label, &state, &cms, &draws);
+                let mut moved = assignments.clone();
+                moved[m].1 = to_label;
+                assert_relative_eq!(
+                    to_loss(score, n_draws as f64, n_items as f64),
+                    actual(&moved),
+                    max_relative = 1e-12
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nvi_change_in_loss_matches_compute_loss() {
+        check_information_based_change_in_loss(|| NVIInformationBasedLoss, |s, d, _| s / d);
+    }
+
+    #[test]
+    fn id_change_in_loss_matches_compute_loss() {
+        check_information_based_change_in_loss(|| IDInformationBasedLoss, |s, d, n| s / (d * n));
+    }
+
+    #[test]
+    fn nid_change_in_loss_matches_compute_loss() {
+        check_information_based_change_in_loss(|| NIDInformationBasedLoss, |s, d, _| 1.0 + s / d);
+    }
+
+    fn check_normalized_information_loss<T: InformationBasedLoss>(ibloss: impl Fn() -> T) {
+        for n_items in [1, 2, 4, 31] {
+            let cache = Log2Cache::new(n_items);
+            for one_cluster in [false, true] {
+                let labels: Vec<_> = (0..n_items)
+                    .map(|i| if one_cluster { 0 } else { i as i32 })
+                    .collect();
+                let draws = Clusterings::from_i32_column_major_order(&labels, n_items);
+                for same_partition in [false, true] {
+                    let assignments: Vec<_> = (0..n_items)
+                        .map(|i| {
+                            let label = if one_cluster == same_partition {
+                                0
+                            } else {
+                                i as LabelType
+                            };
+                            (i, label)
+                        })
+                        .collect();
+                    let new = || GeneralInformationBasedCMLossComputer::new(1, &cache, ibloss());
+                    let state = WorkingClustering::from_vector(
+                        assignments.iter().map(|x| x.1).collect(),
+                        n_items as LabelType,
+                    );
+                    let cms = draws.make_confusion_matrices(&state);
+                    let mut initialized = new();
+                    initialized.initialize(&state, &cms);
+                    let expected = if same_partition || n_items == 1 {
+                        0.0
+                    } else {
+                        1.0
+                    };
+                    assert_relative_eq!(
+                        initialized.compute_loss(&state, &cms),
+                        expected,
+                        epsilon = 1e-12
+                    );
+
+                    let mut incremental = new();
+                    let mut state = WorkingClustering::empty(n_items, n_items as LabelType);
+                    let mut cms = Array3::zeros((n_items + 1, draws.max_clusters() as usize, 1));
+                    for (item, label) in assignments {
+                        state.assign(item, label, &mut incremental, &mut cms, &draws);
+                    }
+                    assert_relative_eq!(
+                        incremental.compute_loss(&state, &cms),
+                        expected,
+                        epsilon = 1e-12
+                    );
+                    if one_cluster {
+                        let mut rng = Pcg64Mcg::seed_from_u64(7);
+                        for _ in 0..n_items * 10 {
+                            let item = rng.random_range(0..n_items);
+                            let label = rng.random_range(0..n_items) as LabelType;
+                            state.reassign(item, label, &mut incremental, &mut cms, &draws);
+                        }
+                        for item in 0..n_items {
+                            state.reassign(item, 0, &mut incremental, &mut cms, &draws);
+                        }
+                        assert_relative_eq!(
+                            incremental.compute_loss(&state, &cms),
+                            0.0,
+                            epsilon = 1e-12
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nvi_handles_one_cluster_and_singleton_partitions() {
+        check_normalized_information_loss(|| NVIInformationBasedLoss);
+    }
+
+    #[test]
+    fn nid_handles_one_cluster_and_singleton_partitions() {
+        check_normalized_information_loss(|| NIDInformationBasedLoss);
+    }
+
+    #[test]
+    fn salso_handles_zero_entropy_draws() {
+        for n_items in [1, 4, 31] {
+            let draws = Clusterings::from_i32_column_major_order(&vec![1; n_items * 3], n_items);
+            for loss in [LossFunction::NVI, LossFunction::NID] {
+                for prob_sequential_allocation in [0.0, 1.0] {
+                    for n_cores in [1, 2] {
+                        let p = SALSOParameters {
+                            n_items,
+                            max_size: 0,
+                            max_size_as_rf: false,
+                            max_scans: 10,
+                            max_zealous_updates: 4,
+                            n_runs: 4,
+                            prob_sequential_allocation,
+                            prob_singletons_initialization: 0.0,
+                        };
+                        let result = minimize_by_salso(
+                            PartitionDistributionInformation::Draws(&draws),
+                            loss,
+                            &p,
+                            f64::INFINITY,
+                            n_cores,
+                            &mut Pcg64Mcg::seed_from_u64(1),
+                        );
+                        assert_eq!(result.clustering, vec![0; n_items]);
+                        assert_relative_eq!(result.expected_loss, 0.0, epsilon = 1e-12);
+                    }
+                }
+            }
+        }
+    }
+
+    // For VI, change_in_loss is a change relative to an unspecified baseline, so compare
+    // differences between candidate labels.
+    #[test]
+    fn vi_change_in_loss_differences_match_compute_loss() {
+        let n_items = 12;
+        let n_draws = 9;
+        let draws = random_draws(n_items, n_draws);
+        let cache = Log2Cache::new(n_items);
+        let new = || VICMLossComputer::new(1.0, &cache);
+        let actual = |assignments: &[(usize, LabelType)]| {
+            let (loss_computer, state, cms) = build(new(), &draws, assignments);
+            loss_computer.compute_loss(&state, &cms)
+        };
+        let scale = (n_draws * n_items) as f64;
+        for m in 1..n_items {
+            let assignments: Vec<_> = (0..m).map(|i| (i, (i % 3) as LabelType)).collect();
+            let (loss_computer, state, cms) = build(new(), &draws, &assignments);
+            let change =
+                |to_label| loss_computer.change_in_loss(m, to_label, None, &state, &cms, &draws);
+            let mut moved = assignments.clone();
+            moved.push((m, 0));
+            let baseline = actual(&moved);
+            for to_label in 1..4 {
+                moved[m].1 = to_label;
+                assert_relative_eq!(
+                    (change(to_label) - change(0)) / scale,
+                    actual(&moved) - baseline,
+                    epsilon = 1e-12
+                );
+            }
+        }
+        let assignments: Vec<_> = (0..n_items).map(|i| (i, (i % 3) as LabelType)).collect();
+        let baseline = actual(&assignments);
+        let (loss_computer, state, cms) = build(new(), &draws, &assignments);
+        for m in 0..n_items {
+            let from_label = state.get(m);
+            let change = |to_label| {
+                loss_computer.change_in_loss(m, to_label, Some(from_label), &state, &cms, &draws)
+            };
+            for to_label in 0..4 {
+                let mut moved = assignments.clone();
+                moved[m].1 = to_label;
+                assert_relative_eq!(
+                    (change(to_label) - change(from_label)) / scale,
+                    actual(&moved) - baseline,
+                    epsilon = 1e-12
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "cms and draws disagree")]
+    fn vi_change_in_loss_rejects_mismatched_draws() {
+        let draws = random_draws(4, 3);
+        let cache = Log2Cache::new(4);
+        let state = WorkingClustering::empty(4, 2);
+        let cms = Array3::<CountType>::zeros((3, draws.max_clusters() as usize, 4));
+        let _ = VICMLossComputer::new(1.0, &cache).change_in_loss(0, 0, None, &state, &cms, &draws);
+    }
+
+    #[test]
+    fn salso_runs_with_every_draws_based_loss() {
+        let n_items = 30;
+        let draws = random_draws(n_items, 20);
+        for loss_function in [
+            LossFunction::BinderDraws(1.0),
+            LossFunction::OneMinusARI,
+            LossFunction::VI(1.0),
+            LossFunction::NVI,
+            LossFunction::ID,
+            LossFunction::NID,
+        ] {
+            for prob_sequential_allocation in [0.0, 1.0] {
+                let p = SALSOParameters {
+                    n_items,
+                    max_size: 0,
+                    max_size_as_rf: true,
+                    max_scans: 10,
+                    max_zealous_updates: 10,
+                    n_runs: 4,
+                    prob_sequential_allocation,
+                    prob_singletons_initialization: 0.0,
+                };
+                let result = minimize_by_salso(
+                    PartitionDistributionInformation::Draws(&draws),
+                    loss_function,
+                    &p,
+                    5.0,
+                    1,
+                    &mut Pcg64Mcg::seed_from_u64(1),
+                );
+                assert_eq!(result.clustering.len(), n_items);
+                assert!(result.expected_loss.is_finite());
+            }
+        }
     }
 }

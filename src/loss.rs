@@ -218,7 +218,8 @@ pub fn compute_loss_multiple<'a, T: CMLossComputer>(
     let clusterings = Clusterings::from_i32_column_major_order(partitions.data(), n_items);
     let draws = Clusterings::from_i32_column_major_order(draws.data(), n_items);
     for k in 0..clusterings.n_clusterings() {
-        let state = WorkingClustering::from_slice(clusterings.labels(k), clusterings.n_clusters(k));
+        let state =
+            WorkingClustering::from_vector(clusterings.labels(k), clusterings.n_clusters(k));
         let cms = draws.make_confusion_matrices(&state);
         let mut loss_computer = loss_computer_factory();
         loss_computer.initialize(&state, &cms);
