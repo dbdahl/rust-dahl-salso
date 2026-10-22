@@ -101,8 +101,9 @@ checksum = "a31eee39dddec8330830986fcd7625edb5a24ec90ea038215273bbc3adb08ac6"
 
 [[package]]
 name = "dahl-partition"
-version = "0.5.5"
-source = "git+https://github.com/dbdahl/rust-dahl-partition.git?rev=dbb59e5#dbb59e5015868a29866977b39f8ef695ba3c8420"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81708188d7bbacad7b91ddf3758c45987882e0075b99b97ed3d2b421b4adbb09"
 dependencies = [
  "rand",
 ]

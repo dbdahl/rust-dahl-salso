@@ -10,10 +10,7 @@ rust-version = "1.85.1"
 
 [dependencies]
 
-# dahl-partition = "0.5.5"
-dahl-partition = { git="https://github.com/dbdahl/rust-dahl-partition.git", rev="dbb59e5" }
-# dahl-partition = { path="/home/dahl/docs/devel/rust-dahl-partition" }
-
+dahl-partition = "0.5.6"
 rand = "0.10.0"
 rand_pcg = "0.10.0"
 crossbeam = "0.8.0"
